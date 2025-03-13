@@ -1,5 +1,5 @@
 import { db } from "@/lib/firebaseConfig"; // Firestore for users (users DB)
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
 const PRODUCTS_API_URL = "https://pricing.bevgo.co.za/api/getProduct"; // Replace with actual URL
@@ -16,17 +16,21 @@ export async function POST(req) {
     const userDocRef = doc(db, "users", userId);
     const userDocSnap = await getDoc(userDocRef);
 
-    let cart = userDocSnap.exists() ? userDocSnap.data().cart || [] : [];
+    let favorites = [];
 
-    // Check if the product already exists in the cart
-    let productIndex = cart.findIndex(item => item.unique_code === unique_code);
-    let updatedCart = [...cart];
+    if (userDocSnap.exists()) {
+      favorites = userDocSnap.data().favorites || [];
+    } else {
+      // 🔥 If the user does not exist, create an empty favorites array
+      await setDoc(userDocRef, { favorites: [] });
+    }
+
+    // Check if the product is already in favorites
+    let productExists = favorites.some(item => item.unique_code === unique_code);
+    let updatedFavorites = [...favorites];
 
     if (action === "add") {
-      if (productIndex !== -1) {
-        // Product exists, increment count
-        updatedCart[productIndex].in_cart += 1;
-      } else {
+      if (!productExists) {
         // Fetch product details from Project A's API
         const response = await fetch(PRODUCTS_API_URL, {
           method: "POST",
@@ -39,27 +43,18 @@ export async function POST(req) {
         }
 
         const { product } = await response.json();
-        product.in_cart = 1; // Set initial cart count
-        updatedCart.push(product);
+        updatedFavorites.push(product);
       }
     } else if (action === "remove") {
-      if (productIndex !== -1) {
-        if (updatedCart[productIndex].in_cart > 1) {
-          updatedCart[productIndex].in_cart -= 1;
-        } else {
-          // If count reaches 0, remove item from cart
-          updatedCart.splice(productIndex, 1);
-        }
+      if (productExists) {
+        updatedFavorites = updatedFavorites.filter(item => item.unique_code !== unique_code);
       }
     }
 
-    // Update Firestore document in users DB
-    await updateDoc(userDocRef, { cart: updatedCart });
+    // 🔥 Use setDoc() instead of updateDoc() to create the document if it doesn’t exist
+    await setDoc(userDocRef, { favorites: updatedFavorites }, { merge: true });
 
-    // Calculate total cart items
-    const totalItems = updatedCart.reduce((acc, item) => acc + item.in_cart, 0);
-
-    return NextResponse.json({ cart: updatedCart, totalItems }, { status: 200 });
+    return NextResponse.json({ favorites: updatedFavorites }, { status: 200 });
 
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
