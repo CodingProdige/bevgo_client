@@ -16,10 +16,14 @@ const returnableMappings = {
 
 export async function POST(req) {
   try {
-    const { userId, unique_code, action } = await req.json();
+    const { userId, unique_code, action, quantity } = await req.json();
 
-    if (!userId || !unique_code || !["add", "remove"].includes(action)) {
+    if (!userId || !unique_code || !["add", "remove", "edit"].includes(action)) {
       return NextResponse.json({ error: "Missing or invalid parameters" }, { status: 400 });
+    }
+
+    if (action !== "remove" && (!quantity || quantity < 0)) {
+      return NextResponse.json({ error: "Invalid quantity parameter" }, { status: 400 });
     }
 
     const userDocRef = doc(db, "users", userId);
@@ -34,9 +38,17 @@ export async function POST(req) {
     const returnablesResponse = await fetch(RETURNABLES_API_URL);
     const returnablesData = await returnablesResponse.json();
 
-    if (action === "add") {
+    if (action === "add" || action === "edit") {
       if (productIndex !== -1) {
-        updatedCart[productIndex].in_cart += 1;
+        if (action === "edit") {
+          if (quantity === 0) {
+            updatedCart.splice(productIndex, 1);
+          } else {
+            updatedCart[productIndex].in_cart = quantity;
+          }
+        } else {
+          updatedCart[productIndex].in_cart += quantity;
+        }
       } else {
         // ✅ Fetch product details
         const response = await fetch(PRODUCTS_API_URL, {
@@ -50,7 +62,7 @@ export async function POST(req) {
         }
 
         const { product } = await response.json();
-        product.in_cart = 1; // Initialize cart quantity
+        product.in_cart = quantity; // Set cart quantity
 
         // ✅ Check if this product has a returnable item
         let returnableItem = null;
@@ -80,11 +92,7 @@ export async function POST(req) {
       }
     } else if (action === "remove") {
       if (productIndex !== -1) {
-        if (updatedCart[productIndex].in_cart > 1) {
-          updatedCart[productIndex].in_cart -= 1;
-        } else {
-          updatedCart.splice(productIndex, 1);
-        }
+        updatedCart.splice(productIndex, 1);
       }
     }
 
