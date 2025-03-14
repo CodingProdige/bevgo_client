@@ -1,5 +1,5 @@
 import { db, auth } from "@/lib/firebaseConfig";
-import { collection, addDoc, query, where, getDocs } from "firebase/firestore";
+import { collection, doc, setDoc, query, where, getDocs } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { sendEmail } from "@/lib/emailService";
 import { registerTemplate } from "@/lib/emailTemplates/registerTemplate";
@@ -50,21 +50,21 @@ export async function POST(req) {
 
     // Create User in Firebase Authentication
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const userId = userCredential.user.uid;
+    const userId = userCredential.user.uid; // Use this as the Firestore doc ID
 
-    // Save user data in Firestore
+    // Save user data in Firestore using setDoc (with userId as the document ID)
     const newUser = {
       userId,
       email,
       companyName,
       companyCode,
       companyAddress,
-      companyVAT,
+      companyVAT: companyVAT || "", // Optional
       companyContact,
-      createdAt: new Date(),
+      createdAt: new Date().toISOString(), // Store timestamp as ISO string
     };
 
-    await addDoc(usersRef, newUser);
+    await setDoc(doc(db, "users", userId), newUser); // 🔥 Ensure the document is tied to the userId
 
     // Generate the email content
     const emailContent = registerTemplate({
