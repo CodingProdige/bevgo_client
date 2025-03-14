@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 // API URL for fetching cart totals (POST request)
 const CART_TOTALS_API_URL = "https://bevgo-client.vercel.app/api/cartTotals";
 
-// Generate a unique order number
+// ✅ Function to generate a unique order number
 async function generateUniqueOrderNumber() {
   let orderNumber;
   let exists = true;
@@ -21,6 +21,13 @@ async function generateUniqueOrderNumber() {
   }
 
   return orderNumber;
+}
+
+// ✅ Function to determine rebate percentage based on subtotal (excluding VAT & returnables)
+function calculateRebate(subtotal) {
+  if (subtotal > 10000) return 2.0; // 2% rebate
+  if (subtotal > 5000) return 1.5;  // 1.5% rebate
+  return 1.0; // Default 1% rebate
 }
 
 export async function POST(req) {
@@ -61,6 +68,10 @@ export async function POST(req) {
       return NextResponse.json({ error: "Cart is empty" }, { status: 400 });
     }
 
+    // ✅ Calculate the rebate amount (ONLY on subtotal, excluding VAT & returnables)
+    const rebatePercentage = calculateRebate(cartData.subtotal);
+    const rebateAmount = (cartData.subtotal * rebatePercentage) / 100;
+
     // ✅ Generate a unique order number
     const orderNumber = await generateUniqueOrderNumber();
 
@@ -76,6 +87,8 @@ export async function POST(req) {
       invoicePDF: null, // Placeholder for invoice PDF URL
       deliveryNotePDF: null, // Placeholder for delivery note PDF URL
       order_details: cartData, // Capturing full cart details
+      rebatePercentage, // ✅ Save rebate %
+      rebateAmount, // ✅ Save rebate value
     };
 
     // ✅ Save the order in Firestore
@@ -85,7 +98,12 @@ export async function POST(req) {
     // ✅ Clear user's cart
     await updateDoc(userRef, { cart: [] });
 
-    return NextResponse.json({ message: "Order finalized successfully", orderNumber }, { status: 201 });
+    return NextResponse.json({
+      message: "Order finalized successfully",
+      orderNumber,
+      rebatePercentage,
+      rebateAmount,
+    }, { status: 201 });
 
   } catch (error) {
     console.error("❌ Error finalizing order:", error);

@@ -2,6 +2,13 @@ import { db } from "@/lib/firebaseConfig"; // Firestore for users (users DB)
 import { doc, getDoc } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
+// ✅ Function to determine rebate percentage based on subtotal (excluding VAT & returnables)
+function calculateRebate(subtotal) {
+  if (subtotal > 10000) return 2.0; // 2% rebate
+  if (subtotal > 5000) return 1.5;  // 1.5% rebate
+  return 1.0; // Default 1% rebate
+}
+
 export async function POST(req) {
   try {
     const { userId } = await req.json();
@@ -10,7 +17,7 @@ export async function POST(req) {
       return NextResponse.json({ error: "Missing userId" }, { status: 400 });
     }
 
-    // Fetch user document
+    // ✅ Fetch user document
     const userDocRef = doc(db, "users", userId);
     const userDocSnap = await getDoc(userDocRef);
 
@@ -35,7 +42,7 @@ export async function POST(req) {
       returnableSubtotal += returnablePrice * quantity;
       totalItems += quantity;
 
-      // Include full product data
+      // ✅ Include full product data
       cartDetails.push({
         ...item, // Spread full product data
         quantity: quantity, // Ensure proper quantity format
@@ -44,16 +51,25 @@ export async function POST(req) {
       });
     });
 
-    const vat = parseFloat((subtotal * 0.15).toFixed(2)); // VAT at 15%
+    // ✅ Calculate VAT (15%)
+    const vat = parseFloat((subtotal * 0.15).toFixed(2));
+
+    // ✅ Calculate total order value
     const total = parseFloat((subtotal + returnableSubtotal + vat).toFixed(2));
 
+    // ✅ Calculate rebate (ONLY on subtotal, excluding VAT & returnables)
+    const rebatePercentage = calculateRebate(subtotal);
+    const rebateAmount = parseFloat(((subtotal * rebatePercentage) / 100).toFixed(2));
+
     return NextResponse.json({
-      subtotal: parseFloat(subtotal.toFixed(2)),
-      returnableSubtotal: parseFloat(returnableSubtotal.toFixed(2)),
-      vat: vat,
-      total: total,
-      totalItems: totalItems,
-      cartDetails: cartDetails
+      subtotal: parseFloat(subtotal.toFixed(2)), // Excluding VAT & returnables
+      returnableSubtotal: parseFloat(returnableSubtotal.toFixed(2)), // Returnables cost
+      vat: vat, // 15% VAT
+      total: total, // Final order total
+      totalItems: totalItems, // Total number of items
+      rebatePercentage: rebatePercentage, // ✅ Rebate percentage
+      rebateAmount: rebateAmount, // ✅ Rebate amount
+      cartDetails: cartDetails // Full cart breakdown
     }, { status: 200 });
 
   } catch (error) {
