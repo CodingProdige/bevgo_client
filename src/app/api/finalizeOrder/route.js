@@ -91,6 +91,7 @@ export async function POST(req) {
       rebatePercentage, // ✅ Save rebate %
       rebateAmount, // ✅ Save rebate value
       order_canceled: false, // true or false whether the order is canceled
+      payment_status,
     };
 
     // ✅ Save the order in Firestore
