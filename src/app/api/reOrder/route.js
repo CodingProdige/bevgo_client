@@ -2,13 +2,13 @@ import { db } from "@/lib/firebaseConfig"; // Firestore instance
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
-// ✅ Function to generate a unique order number
-async function generateUniqueOrderNumber(companyCode) {
+// ✅ Function to generate an 8-digit unique order number
+async function generateUniqueOrderNumber() {
   let orderNumber;
   let exists = true;
 
   while (exists) {
-    orderNumber = `${companyCode}-${Math.floor(100000 + Math.random() * 900000)}`; // e.g., BEVGO9340-123456
+    orderNumber = `${Math.floor(10000000 + Math.random() * 90000000)}`; // e.g., BG-12345678
     const orderRef = doc(db, "orders", orderNumber);
     const orderSnap = await getDoc(orderRef);
 
@@ -28,31 +28,35 @@ export async function POST(req) {
       return NextResponse.json({ error: "Missing orderNumber" }, { status: 400 });
     }
 
-    // ✅ Fetch the original order
-    const originalOrderRef = doc(db, "orders", orderNumber);
-    const originalOrderSnap = await getDoc(originalOrderRef);
+    // ✅ Fetch the existing order document
+    const existingOrderRef = doc(db, "orders", orderNumber);
+    const existingOrderSnap = await getDoc(existingOrderRef);
 
-    if (!originalOrderSnap.exists()) {
+    if (!existingOrderSnap.exists()) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
 
-    const originalOrder = originalOrderSnap.data();
+    const existingOrderData = existingOrderSnap.data();
 
     // ✅ Generate a new unique order number
-    const newOrderNumber = await generateUniqueOrderNumber(originalOrder.companyCode);
+    const newOrderNumber = await generateUniqueOrderNumber();
 
-    // ✅ Duplicate the order with new order number
-    const newOrderDetails = {
-      ...originalOrder, // Copy everything
-      orderId: newOrderNumber, // ✅ Assign new order ID
-      orderNumber: newOrderNumber, // ✅ Assign new order number
-      createdAt: new Date().toISOString(), // ✅ Update createdAt timestamp
-      order_status: "Pending", // ✅ Reset order status to Pending
+    // ✅ Create a new order document with the duplicated data
+    const newOrderData = {
+      ...existingOrderData,
+      orderNumber: newOrderNumber, // ✅ Assign a new unique order number
+      createdAt: new Date().toISOString(), // ✅ Update the creation date
+      order_status: "Pending", // ✅ Reset order status
+      pickingSlipPDF: null,
+      invoicePDF: null,
+      deliveryNotePDF: null,
+      order_canceled: false, // ✅ Reset order cancellation status
+      payment_status: "Payment Pending",
     };
 
     // ✅ Save the duplicated order in Firestore
     const newOrderRef = doc(db, "orders", newOrderNumber);
-    await setDoc(newOrderRef, newOrderDetails);
+    await setDoc(newOrderRef, newOrderData);
 
     return NextResponse.json({
       message: "Order duplicated successfully",

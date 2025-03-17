@@ -1,0 +1,17 @@
+<h2>Thank You, <%= companyName %>! 🎉</h2>
+<p>Your order <strong>#<%= orderNumber %></strong> has been placed successfully on <%= orderDate %>.</p>
+
+<h3>Order Summary:</h3>
+<ul>
+  <% orderDetails.cartDetails.forEach(item => { %>
+    <li>
+      <strong><%= item.product_title %></strong> - <%= item.quantity %> x R<%= item.price_per_unit_incl.toFixed(2) %>
+    </li>
+  <% }); %>
+</ul>
+
+<p>Subtotal: R<%= orderDetails.subtotal.toFixed(2) %></p>
+<p>Rebate (<%= rebatePercentage %>%): -R<%= rebateAmount.toFixed(2) %></p>
+<p>Total: <strong>R<%= orderDetails.total.toFixed(2) %></strong></p>
+
+<p>Thank you for shopping with us! 🚀</p>

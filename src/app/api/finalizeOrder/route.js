@@ -1,33 +1,35 @@
-import { db } from "@/lib/firebaseConfig"; // Firestore instance
-import { collection, doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
+import path from "path";
+import { promises as fs } from "fs";
+import ejs from "ejs";
+import { sendEmail } from "@/lib/emailService";
+import { db } from "@/lib/firebaseConfig";
+import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
-// API URL for fetching cart totals (POST request)
 const CART_TOTALS_API_URL = "https://bevgo-client.vercel.app/api/cartTotals";
 
-// ✅ Function to generate a unique order number
-async function generateUniqueOrderNumber(companyCode) {
+// ✅ Function to generate an 8-digit unique order number
+async function generateUniqueOrderNumber() {
   let orderNumber;
   let exists = true;
 
   while (exists) {
-    orderNumber = `${companyCode}-${Math.floor(100000 + Math.random() * 900000)}`; // e.g., BEVGO9340-123456
+    orderNumber = `${Math.floor(10000000 + Math.random() * 90000000)}`;
     const orderRef = doc(db, "orders", orderNumber);
     const orderSnap = await getDoc(orderRef);
 
     if (!orderSnap.exists()) {
-      exists = false; // Ensures uniqueness
+      exists = false; 
     }
   }
-
   return orderNumber;
 }
 
 // ✅ Function to determine rebate percentage based on subtotal (excluding VAT & returnables)
 function calculateRebate(subtotal) {
-  if (subtotal > 10000) return 2.0; // 2% rebate
-  if (subtotal > 5000) return 1.5;  // 1.5% rebate
-  return 1.0; // Default 1% rebate
+  if (subtotal > 10000) return 2.0;
+  if (subtotal > 5000) return 1.5;
+  return 1.0;
 }
 
 export async function POST(req) {
@@ -46,12 +48,12 @@ export async function POST(req) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const { companyCode } = userSnap.data();
+    const { companyCode, email } = userSnap.data();
     if (!companyCode) {
       return NextResponse.json({ error: "Company code not found" }, { status: 400 });
     }
 
-    // ✅ Fetch cart totals using POST request with userId in body
+    // ✅ Fetch cart totals
     const response = await fetch(CART_TOTALS_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -63,43 +65,62 @@ export async function POST(req) {
     }
 
     const cartData = await response.json();
-
     if (cartData.totalItems === 0) {
       return NextResponse.json({ error: "Cart is empty" }, { status: 400 });
     }
 
-    // ✅ Calculate the rebate amount (ONLY on subtotal, excluding VAT & returnables)
+    // ✅ Calculate rebate
     const rebatePercentage = calculateRebate(cartData.subtotal);
     const rebateAmount = (cartData.subtotal * rebatePercentage) / 100;
 
-    // ✅ Generate a unique order number
-    const orderNumber = await generateUniqueOrderNumber(companyCode);
+    // ✅ Generate unique order number
+    const orderNumber = await generateUniqueOrderNumber();
 
-    // ✅ Order data to save
+    // ✅ Save order to Firestore
     const orderDetails = {
-      orderId: orderNumber, // ✅ Order ID is the same as orderNumber
       orderNumber,
       userId,
       companyCode,
       payment_terms,
-      order_status: "Pending", // Default status
+      order_status: "Pending",
       createdAt: new Date().toISOString(),
-      pickingSlipPDF: null, // Placeholder for PDF URL
-      invoicePDF: null, // Placeholder for invoice PDF URL
-      deliveryNotePDF: null, // Placeholder for delivery note PDF URL
-      order_details: cartData, // Capturing full cart details
-      rebatePercentage, // ✅ Save rebate %
-      rebateAmount, // ✅ Save rebate value
-      order_canceled: false, // true or false whether the order is canceled
-      payment_status,
+      pickingSlipPDF: null,
+      invoicePDF: null,
+      deliveryNotePDF: null,
+      order_details: cartData,
+      rebatePercentage,
+      rebateAmount,
+      order_canceled: false,
+      payment_status: "Payment Pending",
     };
 
-    // ✅ Save the order in Firestore
     const orderRef = doc(db, "orders", orderNumber);
     await setDoc(orderRef, orderDetails);
 
     // ✅ Clear user's cart
     await updateDoc(userRef, { cart: [] });
+
+    // 📧 ✅ Send Order Confirmation Email
+    const templatePath = path.join(process.cwd(), "src", "lib", "emailTemplates", "orderConfirmation.ejs");
+
+    try {
+      const templateContent = await fs.readFile(templatePath, "utf-8");
+      const emailHTML = ejs.render(templateContent, {
+        companyName: userSnap.data().companyName, // ✅ Ensure company name is passed
+        orderNumber,
+        companyCode,
+        email,
+        orderDetails: cartData,
+        rebateAmount,
+        rebatePercentage,
+        orderDate: new Date().toLocaleString(), // ✅ Fix for missing `orderDate`
+      });
+
+      await sendEmail(email, `Your Order Confirmation - ${orderNumber}`, emailHTML);
+      console.log(`📧 Order confirmation sent to ${email}`);
+    } catch (emailError) {
+      console.error("❌ Failed to send order confirmation email:", emailError);
+    }
 
     return NextResponse.json({
       message: "Order finalized successfully",
@@ -110,6 +131,6 @@ export async function POST(req) {
 
   } catch (error) {
     console.error("❌ Error finalizing order:", error);
-    return NextResponse.json({ error: "Something went wrong" }, { status: 500 });
+    return NextResponse.json({ error: "Something went wrong", details: error.message }, { status: 500 });
   }
 }
