@@ -6,12 +6,12 @@ import { NextResponse } from "next/server";
 const CART_TOTALS_API_URL = "https://bevgo-client.vercel.app/api/cartTotals";
 
 // ✅ Function to generate a unique order number
-async function generateUniqueOrderNumber() {
+async function generateUniqueOrderNumber(companyCode) {
   let orderNumber;
   let exists = true;
 
   while (exists) {
-    orderNumber = `BG-${Math.floor(100000 + Math.random() * 900000)}`; // e.g., BG-123456
+    orderNumber = `${companyCode}-${Math.floor(100000 + Math.random() * 900000)}`; // e.g., BEVGO9340-123456
     const orderRef = doc(db, "orders", orderNumber);
     const orderSnap = await getDoc(orderRef);
 
@@ -73,10 +73,11 @@ export async function POST(req) {
     const rebateAmount = (cartData.subtotal * rebatePercentage) / 100;
 
     // ✅ Generate a unique order number
-    const orderNumber = await generateUniqueOrderNumber();
+    const orderNumber = await generateUniqueOrderNumber(companyCode);
 
     // ✅ Order data to save
     const orderDetails = {
+      orderId: orderNumber, // ✅ Order ID is the same as orderNumber
       orderNumber,
       userId,
       companyCode,
@@ -89,6 +90,7 @@ export async function POST(req) {
       order_details: cartData, // Capturing full cart details
       rebatePercentage, // ✅ Save rebate %
       rebateAmount, // ✅ Save rebate value
+      order_canceled: false, // true or false whether the order is canceled
     };
 
     // ✅ Save the order in Firestore
