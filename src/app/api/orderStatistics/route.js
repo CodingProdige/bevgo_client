@@ -10,71 +10,56 @@ export async function POST(req) {
       return NextResponse.json({ error: "Missing companyCode" }, { status: 400 });
     }
 
-    // ✅ Query Firestore for orders with matching companyCode
+    // ✅ Query Firestore for orders with matching companyCode, excluding canceled orders
     const ordersRef = collection(db, "orders");
     const ordersQuery = query(ordersRef, where("companyCode", "==", companyCode));
     const querySnapshot = await getDocs(ordersQuery);
 
+    // ✅ Initialize statistics
     let totalRebateAmount = 0;
     let totalOrders = 0;
-    let totalOrdersPaymentPending = 0;
     let totalOrderValue = 0;
-    let totalOrdersCanceled = 0;
+    let totalPaymentPendingOrders = 0;
+    let productCounts = {};
 
-    let productCounts = {}; // Track most ordered products
+    querySnapshot.forEach((doc) => {
+      const order = doc.data();
 
-    querySnapshot.docs.forEach((doc) => {
-      const orderData = doc.data();
+      // ✅ Exclude canceled orders
+      if (order.order_canceled === true) return;
+
       totalOrders++;
+      totalRebateAmount += order.rebateAmount || 0;
+      totalOrderValue += order.order_details?.total || 0;
 
-      // ✅ Total rebate amount
-      if (orderData.rebateAmount) {
-        totalRebateAmount += orderData.rebateAmount;
+      if (order.payment_status === "Payment Pending") {
+        totalPaymentPendingOrders++;
       }
 
-      // ✅ Check if payment status is "Payment Pending"
-      if (orderData.payment_status === "Payment Pending") {
-        totalOrdersPaymentPending++;
-      }
-
-      // ✅ Total of all order totals
-      if (orderData.order_details?.total) {
-        totalOrderValue += orderData.order_details.total;
-      }
-
-      // ✅ Check if the order was canceled
-      if (orderData.order_canceled === true) {
-        totalOrdersCanceled++;
-      }
-
-      // ✅ Count total quantity of each product
-      if (orderData.order_details?.cartDetails) {
-        orderData.order_details.cartDetails.forEach((product) => {
-          const productKey = `${product.unique_code}-${product.product_title}`;
-          if (!productCounts[productKey]) {
-            productCounts[productKey] = {
-              unique_code: product.unique_code,
-              product_title: product.product_title,
-              total_quantity: 0,
-            };
-          }
-          productCounts[productKey].total_quantity += parseInt(product.quantity) || 0;
-        });
-      }
+      // ✅ Count ordered products
+      order.order_details?.cartDetails?.forEach((item) => {
+        if (!productCounts[item.unique_code]) {
+          productCounts[item.unique_code] = {
+            product_title: item.product_title,
+            total_quantity: 0,
+            product_image: item.product_image, // ✅ Includes product image
+          };
+        }
+        productCounts[item.unique_code].total_quantity += item.quantity;
+      });
     });
 
-    // ✅ Sort and get top 20 most ordered products
-    const topProducts = Object.values(productCounts)
+    // ✅ Sort products by most ordered & get top 20
+    const topOrderedProducts = Object.values(productCounts)
       .sort((a, b) => b.total_quantity - a.total_quantity)
       .slice(0, 20);
 
     return NextResponse.json({
-      totalRebateAmount: parseFloat(totalRebateAmount.toFixed(2)), // ✅ Total rebate amount
-      totalOrders, // ✅ Total number of orders
-      totalOrdersPaymentPending, // ✅ Total orders with payment status "Payment Pending"
-      totalOrderValue: parseFloat(totalOrderValue.toFixed(2)), // ✅ Total of all order totals
-      topOrderedProducts: topProducts, // ✅ Top 20 most ordered products
-      totalOrdersCanceled, // ✅ Total orders where order_canceled is true
+      totalRebateAmount: parseFloat(totalRebateAmount.toFixed(2)),
+      totalOrders, // ✅ Excludes canceled orders
+      totalOrderValue: parseFloat(totalOrderValue.toFixed(2)),
+      totalPaymentPendingOrders,
+      topOrderedProducts, // ✅ Includes product titles, images, and total quantities
     }, { status: 200 });
 
   } catch (error) {

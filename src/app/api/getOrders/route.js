@@ -4,44 +4,36 @@ import { NextResponse } from "next/server";
 
 export async function POST(req) {
   try {
-    const { companyCode } = await req.json();
+    const body = await req.json();
+    const companyCode = body?.companyCode || null;
 
-    if (!companyCode) {
-      return NextResponse.json({ error: "Missing companyCode" }, { status: 400 });
-    }
+    console.log("🔎 Received companyCode:", companyCode);
 
-    // ✅ Query Firestore for orders with matching companyCode
+    // ✅ Query Firestore for orders
     const ordersRef = collection(db, "orders");
-    const ordersQuery = query(ordersRef, where("companyCode", "==", companyCode));
+    let ordersQuery = companyCode
+      ? query(ordersRef, where("companyCode", "==", companyCode)) // Filter by companyCode
+      : query(ordersRef); // Fetch all orders if no companyCode is provided
+
+    console.log("📡 Fetching orders from Firestore...");
     const querySnapshot = await getDocs(ordersQuery);
 
+    if (querySnapshot.empty) {
+      console.log("⚠️ No orders found!");
+    }
+
     // ✅ Extract order data
-    let statusCounts = {
-      Pending: 0,
-      Processing: 0,
-      "Awaiting Payment": 0,
-      Picking: 0,
-      Packed: 0,
-      "Out for Delivery": 0,
-      Delivered: 0
-    };
+    const orders = querySnapshot.docs.map(doc => ({
+      orderId: doc.id,
+      ...doc.data(),
+    }));
 
-    const orders = querySnapshot.docs.map(doc => {
-      const orderData = doc.data();
-      if (statusCounts.hasOwnProperty(orderData.order_status)) {
-        statusCounts[orderData.order_status]++;
-      }
+    console.log(`✅ Orders retrieved: ${orders.length}`);
 
-      return {
-        orderId: doc.id,
-        ...orderData,
-      };
-    });
-
-    return NextResponse.json({ orders, statusCounts }, { status: 200 });
+    return NextResponse.json({ orders }, { status: 200 });
 
   } catch (error) {
     console.error("❌ Error fetching orders:", error);
-    return NextResponse.json({ error: "Something went wrong" }, { status: 500 });
+    return NextResponse.json({ error: "Something went wrong", details: error.message }, { status: 500 });
   }
 }

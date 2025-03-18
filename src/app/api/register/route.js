@@ -52,8 +52,6 @@ export async function POST(req) {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const userId = userCredential.user.uid; // Use this as the Firestore doc ID
 
-    // ✅ Default Payment Terms
-    const paymentTerms = ["Cash on Delivery", "Prepaid", "Net 7"];
 
     // Save user data in Firestore using setDoc (with userId as the document ID)
     const newUser = {
@@ -65,7 +63,7 @@ export async function POST(req) {
       companyVAT: companyVAT || "", // Optional
       companyContact,
       createdAt: new Date().toISOString(), // Store timestamp as ISO string
-      payment_terms: paymentTerms, // ✅ Added default payment terms
+      payment_terms: "COD", // ✅ Added default payment terms
     };
 
     await setDoc(doc(db, "users", userId), newUser); // 🔥 Ensure the document is tied to the userId
@@ -78,7 +76,7 @@ export async function POST(req) {
       companyCode,
       companyAddress,
       companyVAT,
-      companyContact
+      companyContact,
     });
 
     // Send email
