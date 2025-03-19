@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delivery Note</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        .header { display: flex; justify-content: space-between; align-items: center; }
+        .details { margin-top: 20px; }
+        .items { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .items th, .items td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        .footer { margin-top: 20px; text-align: center; font-size: 14px; color: gray; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <img src="<%= logoUrl %>" alt="Company Logo" height="80">
+        <img src="<%= qrCodePath %>" alt="QR Code" height="80">
+    </div>
+
+    <h2>Delivery Note</h2>
+    <p><strong>Order Number:</strong> <%= orderNumber %></p>
+    <p><strong>Order Date:</strong> <%= orderDate %></p>
+    <p><strong>Company Code:</strong> <%= companyCode %></p>
+    <p><strong>Payment Status:</strong> <%= paymentStatus %></p>
+
+    <table class="items">
+        <thead>
+            <tr>
+                <th>Product</th>
+                <th>Quantity</th>
+                <th>Unit Price</th>
+                <th>Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            <% cartItems.forEach(item => { %>
+                <tr>
+                    <td><img src="<%= item.product_image %>" alt="<%= item.product_title %>" height="50"> <%= item.product_title %></td>
+                    <td><%= item.quantity %></td>
+                    <td>R<%= item.price_per_unit_incl.toFixed(2) %></td>
+                    <td>R<%= item.total_price.toFixed(2) %></td>
+                </tr>
+            <% }); %>
+        </tbody>
+    </table>
+
+    <div class="details">
+        <p><strong>Subtotal:</strong> R<%= subtotal %></p>
+        <p><strong>Rebate (<%= rebatePercentage %>%):</strong> -R<%= rebateAmount %></p>
+        <p><strong>VAT:</strong> R<%= vat %></p>
+        <h3>Total: R<%= total %></h3>
+    </div>
+
+    <div class="footer">
+        <p>Thank you for your order! 🚚</p>
+    </div>
+
+</body>
+</html>

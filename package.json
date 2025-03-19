@@ -16,8 +16,10 @@
     "nodemailer": "^6.10.0",
     "pdfkit": "^0.16.0",
     "puppeteer": "^24.4.0",
+    "qrcode": "^1.5.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

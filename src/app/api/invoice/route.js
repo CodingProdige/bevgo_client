@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import puppeteer from "puppeteer";
-import { storage } from "@/lib/firebaseAdmin"; 
+import { storage } from "@/lib/firebaseConfig"; 
 
 export async function POST(req) {
   try {

@@ -26,7 +26,7 @@ export async function POST(req) {
       const order = doc.data();
 
       // ✅ Exclude canceled orders
-      if (order.order_canceled === true) return;
+      if (order.order_status === "Canceled") return;
 
       totalOrders++;
       totalRebateAmount += order.rebateAmount || 0;
