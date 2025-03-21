@@ -1,15 +1,11 @@
-import { db, storage } from "@/lib/firebaseConfig"; // Firestore & Storage instance
-import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db } from "@/lib/firebaseConfig"; // Firestore
+import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
 import { NextResponse } from "next/server";
-import fetch from "node-fetch"; // Ensure node-fetch is available
 import ejs from "ejs";
 import fs from "fs";
 import path from "path";
-import puppeteer from "puppeteer";
-import { v4 as uuidv4 } from "uuid"; // Generate unique file names
-
-const QR_CODE_API_URL = "https://bevgo-client.vercel.app/api/generateQRCode";
+import axios from "axios";
+import { v4 as uuidv4 } from "uuid";
 
 export async function POST(req) {
   try {
@@ -19,9 +15,9 @@ export async function POST(req) {
       return NextResponse.json({ error: "Missing orderNumber" }, { status: 400 });
     }
 
-    console.log(`📌 Fetching order details for Order: ${orderNumber}`);
+    console.log(`📌 Fetching order details for Order Number: ${orderNumber}`);
 
-    // ✅ Fetch the order document from Firestore
+    // ✅ Fetch the order document
     const orderRef = doc(db, "orders", orderNumber);
     const orderSnap = await getDoc(orderRef);
 
@@ -32,37 +28,28 @@ export async function POST(req) {
     const orderData = orderSnap.data();
     console.log("✅ Order details retrieved successfully.");
 
-    // ✅ Generate QR Code for this order
-    console.log("⏳ Generating QR Code...");
-    const qrResponse = await fetch(QR_CODE_API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: orderNumber }),
-    });
+    // ✅ Fetch the user document based on companyCode
+    const userRef = doc(db, "users", orderData.userId);
+    const userSnap = await getDoc(userRef);
 
-    if (!qrResponse.ok) {
-      const qrText = await qrResponse.text();
-      console.error("❌ QR Code API request failed:", qrText);
-      return NextResponse.json({ error: "QR Code API request failed", details: qrText }, { status: 500 });
+    if (!userSnap.exists()) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const qrJson = await qrResponse.json();
-    const qrCodeURL = qrJson.qrCodeURL;
-    console.log(`✅ QR Code Generated Successfully: ${qrCodeURL}`);
+    const userData = userSnap.data();
+    console.log("✅ Customer details retrieved successfully.");
 
-    // ✅ Update Firestore order document with QR Code URL
-    await updateDoc(orderRef, { qrCodeURL });
-    console.log(`📤 Order updated with QR Code: ${qrCodeURL}`);
+    // ✅ Generate QR Code
+    const qrResponse = await axios.post("https://bevgo-client.vercel.app/api/generateQRCode", {
+      value: orderNumber,
+    });
 
-    // ✅ Extract order details
-    const {
-      cartDetails = [], // Default empty array
-      subtotal = 0,
-      rebatePercentage = 0,
-      rebateAmount = 0,
-      vat = 0,
-      total = 0,
-    } = orderData.order_details || {};
+    if (!qrResponse.data.qrCodeURL) {
+      throw new Error("QR Code generation failed");
+    }
+
+    const qrCodeURL = qrResponse.data.qrCodeURL;
+    console.log(`✅ QR Code generated successfully: ${qrCodeURL}`);
 
     // ✅ Load the EJS template
     const templatePath = path.join(process.cwd(), "src/lib/emailTemplates/deliveryNote.ejs");
@@ -70,49 +57,93 @@ export async function POST(req) {
 
     // ✅ Render the HTML with EJS
     const renderedHTML = ejs.render(templateContent, {
-      logoUrl: "https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo_Main_Logo%20-%20Google%20Version%201000x500.png?alt=media&token=bf97d121-8a9b-4949-abd7-8d707f78d4a1",
-      qrCodePath: qrCodeURL,
-      orderNumber,
-      orderDate: new Date(orderData.createdAt).toLocaleDateString(), // ✅ Format date
-      companyCode: orderData.companyCode || "N/A",
-      paymentStatus: orderData.payment_status || "N/A",
-      cartItems: cartDetails, // ✅ Ensures the product list is passed
-      subtotal,
-      rebatePercentage,
-      rebateAmount,
-      vat,
-      total,
+      logoURL: "https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Header%20Banner.png?alt=media&token=fb6ef880-b618-46c5-a1c3-e9bc1dd3690e",
+      companyName: "Bevgo Distributions",
+      companyAddress: "6 Christelle Str, Denneburg, Paarl, Western Cape, South Africa, 7646",
+      companyContact: "071 619 1616",
+      companyEmail: "info@bevgo.co.za",
+      companyVAT: "4760314296",
+      deliveryNoteNumber: orderNumber,
+      deliveryNoteDate: new Date(orderData.createdAt).toLocaleDateString(),
+      customer: {
+        name: userData.companyName,
+        address: userData.companyAddress,
+        contact: userData.companyContact,
+        email: userData.email,
+        vat: userData.companyVAT
+      },
+      cartDetails: orderData.order_details.cartDetails,
+      subtotal: orderData.order_details.subtotal,
+      total: orderData.order_details.total,
+      vat: orderData.order_details.vat,
+      rebatePercentage: orderData.order_details.rebatePercentage,
+      returnableSubtotal: orderData.order_details.returnableSubtotal,
+      subtotalAfterRebate: orderData.order_details.subtotalAfterRebate,
+      subtotalIncludingReturnables: orderData.order_details.subtotalIncludingReturnables,
+      totalItems: orderData.order_details.totalItems,
+      rebateAmount: orderData.order_details.rebateAmount,
     });
 
-    console.log("✅ Delivery note HTML rendered successfully.");
+    console.log("✅ Delivery Note HTML rendered successfully.");
 
-    // ✅ Convert HTML to PDF using Puppeteer
-    const browser = await puppeteer.launch({ args: ["--no-sandbox", "--disable-setuid-sandbox"] }); // ✅ Fix Vercel issue
-    const page = await browser.newPage();
-    await page.setContent(renderedHTML, { waitUntil: "networkidle0" });
-    const pdfBuffer = await page.pdf({ format: "A4" });
+    // ✅ Generate PDF via Cloud Function
+    const pdfFileName = `dn-${orderNumber}`;
+    const cloudFunctionUrl = "https://generatepdf-th2kiymgaa-uc.a.run.app";
 
-    await browser.close();
-    console.log("✅ Delivery note PDF generated successfully.");
+    const response = await axios.post(cloudFunctionUrl, {
+      htmlContent: renderedHTML,
+      fileName: pdfFileName,
+    });
 
-    // ✅ Upload PDF to Firebase Storage
-    const pdfFileName = `deliveryNotes/${orderNumber}-${uuidv4()}.pdf`;
-    const storageRef = ref(storage, pdfFileName);
-    await uploadBytes(storageRef, pdfBuffer, { contentType: "application/pdf" });
+    if (!response.data.pdfUrl) {
+      throw new Error("PDF generation failed");
+    }
 
-    // ✅ Get the public URL of the uploaded PDF
-    const deliveryNotePDF = await getDownloadURL(storageRef);
-    console.log(`✅ Delivery Note PDF uploaded successfully: ${deliveryNotePDF}`);
+    const deliveryNotePDFURL = response.data.pdfUrl;
+    console.log(`✅ PDF generated successfully: ${deliveryNotePDFURL}`);
 
-    // ✅ Update Firestore with the delivery note URL
-    await updateDoc(orderRef, { deliveryNotePDF });
-    console.log(`📤 Order updated with Delivery Note PDF: ${deliveryNotePDF}`);
+    // ✅ Save delivery note data to Firestore in the "deliveryNotes" collection
+    const deliveryNoteData = {
+      logoURL: "https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Header%20Banner.png?alt=media&token=fb6ef880-b618-46c5-a1c3-e9bc1dd3690e",
+      companyName: "Bevgo Distributions",
+      companyAddress: "6 Christelle Str, Denneburg, Paarl, Western Cape, South Africa, 7646",
+      companyContact: "071 619 1616",
+      companyEmail: "info@bevgo.co.za",
+      companyVAT: "4760314296",
+      deliveryNoteNumber: orderNumber,
+      deliveryNoteDate: new Date(orderData.createdAt).toLocaleDateString(),
+      customer: {
+        name: userData.companyName,
+        address: userData.companyAddress,
+        contact: userData.companyContact,
+        email: userData.email,
+        vat: userData.companyVAT
+      },
+      cartDetails: orderData.order_details.cartDetails,
+      subtotal: orderData.order_details.subtotal,
+      total: orderData.order_details.total,
+      vat: orderData.order_details.vat,
+      rebatePercentage: orderData.order_details.rebatePercentage,
+      returnableSubtotal: orderData.order_details.returnableSubtotal,
+      subtotalAfterRebate: orderData.order_details.subtotalAfterRebate,
+      subtotalIncludingReturnables: orderData.order_details.subtotalIncludingReturnables,
+      totalItems: orderData.order_details.totalItems,
+      rebateAmount: orderData.order_details.rebateAmount,
+    };
 
-    // ✅ Respond with success
+    const deliveryNoteRef = doc(db, "deliveryNotes", orderNumber);
+    await setDoc(deliveryNoteRef, deliveryNoteData);
+    console.log("✅ Delivery Note data saved to Firestore.");
+
+    // ✅ Update Firestore order document with delivery note PDF URL
+    await updateDoc(orderRef, {
+      deliveryNotePDF: deliveryNotePDFURL,
+    });
+    console.log(`📤 Order updated with Delivery Note URL: ${deliveryNotePDFURL}`);
+
     return NextResponse.json({
-      message: "Delivery note generated successfully",
-      qrCodeURL,
-      deliveryNotePDF, // ✅ Return the PDF URL
+      message: "Delivery note generated and saved successfully",
+      deliveryNotePDFURL,
       orderNumber,
     }, { status: 200 });
 

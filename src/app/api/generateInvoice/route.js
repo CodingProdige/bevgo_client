@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import ejs from "ejs";
 import fs from "fs";
 import path from "path";
-import puppeteer from "puppeteer";
+import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 
 export async function POST(req) {
@@ -18,7 +18,8 @@ export async function POST(req) {
       companyContact,
       companyEmail,
       companyVAT,
-      logoURL
+      logoURL,
+      paymentMethod,
     } = await req.json();
 
     if (!orderNumber) {
@@ -73,28 +74,27 @@ export async function POST(req) {
       },
       orderDetails: orderData.order_details,
       matchedReturnables,
-      finalTotals: orderData.calcFinalTotal
+      finalTotals: orderData.calcFinalTotal,
+      paymentMethod,
     });
 
     console.log("✅ Invoice HTML rendered successfully.");
 
-    // ✅ Convert HTML to PDF using Puppeteer
-    const browser = await puppeteer.launch({ args: ["--no-sandbox", "--disable-setuid-sandbox"] });
-    const page = await browser.newPage();
-    await page.setContent(renderedHTML, { waitUntil: "networkidle0" });
-    const pdfBuffer = await page.pdf({ format: "A4" });
+    // ✅ Generate PDF via Cloud Function
+    const pdfFileName = `inv-${orderNumber}`;
+    const cloudFunctionUrl = "https://generatepdf-th2kiymgaa-uc.a.run.app";
 
-    await browser.close();
-    console.log("✅ Invoice PDF generated successfully.");
+    const response = await axios.post(cloudFunctionUrl, {
+      htmlContent: renderedHTML,
+      fileName: pdfFileName
+    });
 
-    // ✅ Upload PDF to Firebase Storage
-    const fileName = `invoices/${orderNumber}.pdf`;
-    const fileRef = ref(storage, fileName);
-    await uploadBytes(fileRef, pdfBuffer, { contentType: "application/pdf" });
+    if (!response.data.pdfUrl) {
+      throw new Error("PDF generation failed");
+    }
 
-    // ✅ Get the public download URL
-    const invoicePDFURL = await getDownloadURL(fileRef);
-    console.log(`✅ Invoice uploaded successfully: ${invoicePDFURL}`);
+    const invoicePDFURL = response.data.pdfUrl;
+    console.log(`✅ PDF generated successfully: ${invoicePDFURL}`);
 
     // ✅ Save invoice data to Firestore in the "invoices" collection
     const invoiceData = {
@@ -115,7 +115,10 @@ export async function POST(req) {
       },
       orderDetails: orderData.order_details,
       matchedReturnables,
-      finalTotals: orderData.calcFinalTotal
+      finalTotals: orderData.calcFinalTotal,
+      payment_terms: userData.payment_terms,
+      paymentMethod,
+      payment_status: "Pending",
     };
 
     const invoiceRef = doc(db, "invoices", orderNumber);
@@ -123,7 +126,11 @@ export async function POST(req) {
     console.log("✅ Invoice data saved to Firestore.");
 
     // ✅ Update Firestore order document with invoice PDF URL
-    await updateDoc(orderRef, { invoicePDF: invoicePDFURL });
+    await updateDoc(orderRef, { 
+      invoicePDF: invoicePDFURL,
+      payment_terms: userData.payment_terms,
+      paymentMethod,
+    });
     console.log(`📤 Order updated with Invoice URL: ${invoicePDFURL}`);
 
     return NextResponse.json({

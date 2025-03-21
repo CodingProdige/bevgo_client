@@ -221,6 +221,12 @@
         width: 100%;
         border-top: 1px solid black;
       }
+      .breakdown-row {
+        display: flex;
+        flex-direction: row;
+        justify-content: space-between;
+        width: 100%;
+      }
     </style>
 </head>
 <body>
@@ -244,7 +250,7 @@
                 <h3>Tax Invoice:</h3>
                 <p>Invoice Number: <%= invoiceNumber %></p>
                 <p>Invoice Date: <%= invoiceDate %></p>
-                <p>Due Date: <%= dueDate %></p>
+                <p>Payment Method <%= paymentMethod %></p>
             </div>
         </div>
 
@@ -276,7 +282,7 @@
                         </div>
                         <div class="order-product-title"><%= item.product_title %></div>
                         <div class="order-quantity"><%= item.quantity %></div>
-                        <div class="order-unit-price">R<%= item.price_per_unit_incl.toFixed(2) %></div>
+                        <div class="order-unit-price">R<%= item.price_excl.toFixed(2) %></div>
                         <div class="order-total">R<%= item.total_price.toFixed(2) %></div>
                     </div>
                 <% }) %>
@@ -317,12 +323,28 @@
           </div>
           <div class="totals">
             <h3>Breakdown:</h3>
-            <p>Subtotal (Excl. VAT): R<%= finalTotals.subtotalBeforeVAT %></p>
-             <p>Returnables: -R<%= finalTotals.returnablesDeducted %></p>
-            <p>VAT: R<%= finalTotals.recalculatedVAT %></p>
-            <p>Yoco Fee: +R<%= finalTotals.yocoFee %></p>
+            <div class="breakdown-row">
+              <p>Subtotal (Excl. VAT):</p>
+              <p>R<%= finalTotals.subtotalBeforeVAT %></p>
+            </div>
+            <div class="breakdown-row">
+              <p>Returnables (Excl. VAT):</p>
+              <p>-R<%= finalTotals.returnablesDeducted %></p>
+            </div>
+            <div class="breakdown-row">
+              <p>VAT:</p>
+              <p>R<%= finalTotals.recalculatedVAT %></p>
+            </div>
+            <div class="breakdown-row">
+              <p>Yoco Fee:</p>
+              <p>+R<%= finalTotals.yocoFee %></p>
+            </div>
+           
             <div class="final-total"></div>
-            <p><strong>Total:</strong> R<%= finalTotals.finalTotal %></p>
+              <div class="breakdown-row">
+                <p><strong>Total:</strong></p>
+                <p>R<%= finalTotals.finalTotal %></p>
+              </div>
           </div>
         </div>
     </div>

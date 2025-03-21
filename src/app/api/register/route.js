@@ -63,7 +63,7 @@ export async function POST(req) {
       companyVAT: companyVAT || "", // Optional
       companyContact,
       createdAt: new Date().toISOString(), // Store timestamp as ISO string
-      payment_terms: "COD", // ✅ Added default payment terms
+      payment_terms: 0, // ✅ Added default payment terms options are 0, 7, 30 (indicating days)
     };
 
     await setDoc(doc(db, "users", userId), newUser); // 🔥 Ensure the document is tied to the userId

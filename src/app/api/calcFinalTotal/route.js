@@ -27,7 +27,7 @@ export async function POST(req) {
     let yocoFee = 0;
 
     // ✅ Step 5: Apply YOCO fees if payment is by card
-    if (cardOrCash === "card") {
+    if (cardOrCash === "Card") {
       yocoFee = adjustedTotal * YOCO_PERCENTAGE + YOCO_FIXED_FEE;
       adjustedTotal += yocoFee;
     }
