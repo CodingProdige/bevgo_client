@@ -1,46 +1,69 @@
 import { NextResponse } from "next/server";
+import { db } from "@/lib/firebaseConfig";
+import { doc, getDoc } from "firebase/firestore";
 
 export async function POST(req) {
   try {
-    const { orderTotal, cardOrCash, returnableTotal } = await req.json();
+    const { orderNumber, cardOrCash, returnsExclVat } = await req.json();
 
-    if (!orderTotal) {
-      return NextResponse.json({ error: "Missing orderTotal" }, { status: 400 });
+    if (!orderNumber) {
+      return NextResponse.json({ error: "Missing orderNumber" }, { status: 400 });
     }
 
     const VAT_PERCENTAGE = 0.15; // 15% VAT
-    const YOCO_PERCENTAGE = 0.0295; // 2.95% YOCO fee
+    const YOCO_PERCENTAGE = 0.0295; // 2.95% Yoco fee
     const YOCO_FIXED_FEE = 0.50; // Fixed R0.50 fee
 
-    // ✅ Step 1: Extract the base subtotal (EXCLUDING VAT) from orderTotal
-    let baseSubtotal = orderTotal * (1 - VAT_PERCENTAGE);
+    // ✅ Fetch order details from Firestore
+    const orderRef = doc(db, "orders", orderNumber);
+    const orderSnap = await getDoc(orderRef);
 
-    // ✅ Step 2: Deduct returnableTotal (since it's already VAT exclusive)
-    let newSubtotalExclVAT = baseSubtotal - (returnableTotal || 0);
+    if (!orderSnap.exists()) {
+      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    }
 
-    // ✅ Step 3: Recalculate VAT on the new subtotal
-    let newVAT = newSubtotalExclVAT * VAT_PERCENTAGE;
+    const orderData = orderSnap.data();
+    const {
+      subtotal,
+      subtotalAfterRebate,
+      subtotalIncludingReturnables,
+      rebateAmount,
+      rebatePercentage,
+      vat,
+      total,
+      returnableSubtotal, // ✅ Use this as the "returnablesAdded"
+    } = orderData.order_details;
 
-    // ✅ Step 4: Compute new total including VAT
-    let adjustedTotal = newSubtotalExclVAT + newVAT;
+    // ✅ Step 1: Calculate the VAT on the subtotal including returnables
+    const recalculatedVAT = subtotalIncludingReturnables * VAT_PERCENTAGE;
+
+    // ✅ Step 2: Calculate total including VAT
+    let adjustedTotal = subtotalIncludingReturnables + recalculatedVAT;
 
     let yocoFee = 0;
 
-    // ✅ Step 5: Apply YOCO fees if payment is by card
+    // ✅ Step 3: Apply Yoco fee only if payment method is Card
     if (cardOrCash === "Card") {
       yocoFee = adjustedTotal * YOCO_PERCENTAGE + YOCO_FIXED_FEE;
       adjustedTotal += yocoFee;
     }
 
+    // ✅ Step 4: Deduct returnables (incl. VAT) at the end
+    const returnablesInclVAT = (returnsExclVat || 0) * (1 + VAT_PERCENTAGE);
+    adjustedTotal -= returnablesInclVAT;
+
     return NextResponse.json({
-      originalTotal: orderTotal.toFixed(2),
-      subtotalBeforeVAT: baseSubtotal.toFixed(2),
-      returnablesDeducted: (returnableTotal || 0).toFixed(2),
-      newSubtotalExclVAT: newSubtotalExclVAT.toFixed(2),
-      recalculatedVAT: newVAT.toFixed(2),
+      subtotalBeforeVAT: subtotal.toFixed(2),
+      subtotalAfterRebate: subtotalAfterRebate.toFixed(2),
+      subtotalIncludingReturnables: subtotalIncludingReturnables.toFixed(2),
+      returnablesAdded: returnableSubtotal.toFixed(2), // ✅ Show actual returnable subtotal from order
+      returnablesDeducted: returnablesInclVAT.toFixed(2), // ✅ Deducted at the end with VAT included
+      recalculatedVAT: recalculatedVAT.toFixed(2),
       yocoFee: yocoFee.toFixed(2),
       finalTotal: adjustedTotal.toFixed(2),
+      rebateAmount: rebateAmount.toFixed(2),
       paymentMethod: cardOrCash || "N/A",
+      rebatePercentage: rebatePercentage,
     }, { status: 200 });
 
   } catch (error) {

@@ -57,6 +57,7 @@ export async function POST(req) {
 
     // ✅ Render the HTML with EJS
     const renderedHTML = ejs.render(templateContent, {
+      qrCodeURL: qrCodeURL,
       logoURL: "https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Header%20Banner.png?alt=media&token=fb6ef880-b618-46c5-a1c3-e9bc1dd3690e",
       companyName: "Bevgo Distributions",
       companyAddress: "6 Christelle Str, Denneburg, Paarl, Western Cape, South Africa, 7646",
@@ -104,6 +105,7 @@ export async function POST(req) {
 
     // ✅ Save delivery note data to Firestore in the "deliveryNotes" collection
     const deliveryNoteData = {
+      qrCodeURL: qrCodeURL,
       logoURL: "https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Header%20Banner.png?alt=media&token=fb6ef880-b618-46c5-a1c3-e9bc1dd3690e",
       companyName: "Bevgo Distributions",
       companyAddress: "6 Christelle Str, Denneburg, Paarl, Western Cape, South Africa, 7646",

@@ -133,6 +133,27 @@ export async function POST(req) {
     });
     console.log(`📤 Order updated with Invoice URL: ${invoicePDFURL}`);
 
+    // ✅ Send the invoice email to the customer
+    try {
+      const emailResponse = await axios.post(`https://bevgo-client.vercel.app/api/sendEmailTemplate`, {
+        to: userData.email,
+        subject: `Invoice for Order #${orderNumber}`,
+        templateName: "sendInvoiceEmail",
+        data: {
+          orderNumber,
+          invoicePDFURL: invoicePDFURL,
+        },
+      });
+
+      if (emailResponse.data.error) {
+        console.error("❌ Failed to send invoice email:", emailResponse.data.error);
+      } else {
+        console.log("✅ Invoice email sent successfully!");
+      }
+    } catch (emailError) {
+      console.error("❌ Failed to send invoice email:", emailError.message);
+    }
+
     return NextResponse.json({
       message: "Invoice generated and saved successfully",
       invoicePDFURL,

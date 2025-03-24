@@ -14,8 +14,7 @@ export async function POST(req) {
     }
 
     // ✅ Construct the correct path for the email templates
-    const templatePath = path.join(process.cwd(), "lib", "emailTemplates", `${templateName}.ejs`);
-
+    const templatePath = path.join(process.cwd(), "src", "lib", "emailTemplates", `${templateName}.ejs`);
     // ✅ Check if the template file exists
     try {
       await fs.access(templatePath);

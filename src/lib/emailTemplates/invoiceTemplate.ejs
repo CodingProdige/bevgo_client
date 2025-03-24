@@ -324,20 +324,28 @@
           <div class="totals">
             <h3>Breakdown:</h3>
             <div class="breakdown-row">
-              <p>Subtotal (Excl. VAT):</p>
+              <p>Subtotal (VAT Excl.):</p>
               <p>R<%= finalTotals.subtotalBeforeVAT %></p>
             </div>
             <div class="breakdown-row">
-              <p>Returnables (Excl. VAT):</p>
-              <p>-R<%= finalTotals.returnablesDeducted %></p>
+              <p>Loyalty Discount (<%= finalTotals.rebatePercentage %>%):</p>
+              <p>-R<%= finalTotals.rebateAmount %></p>
             </div>
             <div class="breakdown-row">
-              <p>VAT:</p>
+              <p>Returnable Deposit (VAT Excl.):</p>
+              <p>+R<%= finalTotals.returnablesAdded %></p>
+            </div>
+            <div class="breakdown-row">
+              <p>VAT (15%):</p>
               <p>R<%= finalTotals.recalculatedVAT %></p>
             </div>
             <div class="breakdown-row">
-              <p>Yoco Fee:</p>
+              <p>YOCO Fee (2.95%) + R0.50:</p>
               <p>+R<%= finalTotals.yocoFee %></p>
+            </div>
+            <div class="breakdown-row">
+              <p>Returns Collected (VAT Incl.):</p>
+              <p>-R<%= finalTotals.returnablesDeducted %></p>
             </div>
            
             <div class="final-total"></div>

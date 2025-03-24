@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Invoice - Order #<%= orderNumber %></title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; }
+    h2 { color: #333; }
+    p { margin: 0.5em 0; }
+    a { color: #007bff; text-decoration: none; }
+    .link-button {
+      display: inline-block;
+      margin-top: 1em;
+      padding: 0.5em 1em;
+      background-color: #007bff;
+      color: white;
+      text-decoration: none;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Thank You! 🎉</h2>
+  <p>Your order <strong>#<%= orderNumber %></strong> has been successfully completed.</p>
+  <p>You can view or download your invoice using the link below:</p>
+  <a href="<%= invoicePDFURL %>" class="link-button">View Your Invoice</a>
+  <p>We appreciate your business! 🚀</p>
+</body>
+</html>
