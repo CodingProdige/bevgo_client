@@ -13,24 +13,36 @@ export async function POST(req) {
       );
     }
 
-    console.log(`📌 Updating invoice for Order Number: ${orderNumber}`);
+    console.log(`📌 Updating invoice and order for Order Number: ${orderNumber}`);
 
-    // Reference the invoice document in Firestore
+    // Get the current date and time
+    const dateSettled = new Date().toISOString();
+
+    // Reference the invoice and order documents in Firestore
     const invoiceRef = doc(db, "invoices", orderNumber);
+    const orderRef = doc(db, "orders", orderNumber);
 
-    // Update the payment status
-    await updateDoc(invoiceRef, { payment_status: paymentStatus });
+    // Update the payment status and date settled on both the invoice and order
+    await updateDoc(invoiceRef, { 
+      payment_status: paymentStatus,
+      date_settled: dateSettled
+    });
 
-    console.log("✅ Invoice payment status updated successfully.");
+    await updateDoc(orderRef, { 
+      payment_status: paymentStatus,
+      date_settled: dateSettled
+    });
+
+    console.log("✅ Invoice and order payment status updated successfully with date settled.");
 
     return NextResponse.json(
-      { message: "Invoice payment status updated successfully" },
+      { message: "Invoice and order payment status updated successfully", date_settled: dateSettled },
       { status: 200 }
     );
   } catch (error) {
-    console.error("❌ Failed to update invoice:", error.message);
+    console.error("❌ Failed to update invoice and order:", error.message);
     return NextResponse.json(
-      { error: "Failed to update invoice", details: error.message },
+      { error: "Failed to update invoice and order", details: error.message },
       { status: 500 }
     );
   }

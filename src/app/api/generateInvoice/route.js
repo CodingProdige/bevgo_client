@@ -111,7 +111,8 @@ export async function POST(req) {
         address: userData.companyAddress,
         contact: userData.companyContact,
         email: userData.email,
-        vat: userData.companyVAT
+        vat: userData.companyVAT,
+        companyCode: userData.companyCode
       },
       orderDetails: orderData.order_details,
       matchedReturnables,
