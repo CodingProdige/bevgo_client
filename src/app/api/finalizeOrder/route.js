@@ -34,7 +34,7 @@ function calculateRebate(subtotal) {
 
 export async function POST(req) {
   try {
-    const { userId, payment_terms } = await req.json();
+    const { userId, payment_terms, customerCode } = await req.json();
 
     if (!userId) {
       return NextResponse.json({ error: "Missing userId or payment_terms" }, { status: 400 });
@@ -80,7 +80,7 @@ export async function POST(req) {
     const orderDetails = {
       orderNumber,
       userId,
-      companyCode,
+      companyCode: customerCode ? customerCode : companyCode,
       payment_terms,
       order_status: "Pending",
       createdAt: new Date().toISOString(),

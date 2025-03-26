@@ -1,5 +1,5 @@
 import { db } from "@/lib/firebaseConfig"; // Firestore
-import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { NextResponse } from "next/server";
 import ejs from "ejs";
 import fs from "fs";
@@ -28,16 +28,31 @@ export async function POST(req) {
     const orderData = orderSnap.data();
     console.log("✅ Order details retrieved successfully.");
 
-    // ✅ Fetch the user document based on companyCode
-    const userRef = doc(db, "users", orderData.userId);
-    const userSnap = await getDoc(userRef);
+    let userData = null;
 
-    if (!userSnap.exists()) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    // ✅ Fetch the user document based on companyCode from the order
+    const usersRef = collection(db, "users");
+    const userQuery = query(usersRef, where("companyCode", "==", orderData.companyCode));
+    const userSnap = await getDocs(userQuery);
+
+    if (!userSnap.empty) {
+      userData = userSnap.docs[0].data();
+      console.log("✅ User details retrieved successfully.");
+    } else {
+      console.log("❌ User not found, checking customers collection...");
+
+      // ✅ Check the customers collection if user document not found
+      const customersRef = collection(db, "customers");
+      const customerQuery = query(customersRef, where("companyCode", "==", orderData.companyCode));
+      const customerSnap = await getDocs(customerQuery);
+
+      if (!customerSnap.empty) {
+        userData = customerSnap.docs[0].data();
+        console.log("✅ Customer details retrieved successfully from customers collection.");
+      } else {
+        return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+      }
     }
-
-    const userData = userSnap.data();
-    console.log("✅ Customer details retrieved successfully.");
 
     // ✅ Generate QR Code
     const qrResponse = await axios.post("https://bevgo-client.vercel.app/api/generateQRCode", {
@@ -68,10 +83,12 @@ export async function POST(req) {
       deliveryNoteDate: new Date(orderData.createdAt).toLocaleDateString(),
       customer: {
         name: userData.companyName,
-        address: userData.companyAddress,
-        contact: userData.companyContact,
+        address: userData.deliveryAddress,
+        contact: userData.phone_number,
         email: userData.email,
-        vat: userData.companyVAT
+        vat: userData.vatNumber,
+        payment_terms: userData.payment_terms,
+        companyCode: userData.companyCode
       },
       cartDetails: orderData.order_details.cartDetails,
       subtotal: orderData.order_details.subtotal,
@@ -116,10 +133,12 @@ export async function POST(req) {
       deliveryNoteDate: new Date(orderData.createdAt).toLocaleDateString(),
       customer: {
         name: userData.companyName,
-        address: userData.companyAddress,
-        contact: userData.companyContact,
+        address: userData.deliveryAddress,
+        contact: userData.phone_number,
         email: userData.email,
-        vat: userData.companyVAT
+        vat: userData.vatNumber,
+        payment_terms: userData.payment_terms,
+        companyCode: userData.companyCode
       },
       cartDetails: orderData.order_details.cartDetails,
       subtotal: orderData.order_details.subtotal,

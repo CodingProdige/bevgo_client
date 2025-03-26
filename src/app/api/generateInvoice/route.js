@@ -67,10 +67,12 @@ export async function POST(req) {
       dueDate: "Due on Delivery",
       customer: {
         name: userData.companyName,
-        address: userData.companyAddress,
-        contact: userData.companyContact,
+        address: userData.deliveryAddress,
+        contact: userData.phone_number,
         email: userData.email,
-        vat: userData.companyVAT
+        vat: userData.vatNumber,
+        payment_terms: userData.payment_terms,
+        companyCode: userData.companyCode
       },
       orderDetails: orderData.order_details,
       matchedReturnables,
@@ -108,10 +110,11 @@ export async function POST(req) {
       companyVAT,
       customer: {
         name: userData.companyName,
-        address: userData.companyAddress,
-        contact: userData.companyContact,
+        address: userData.deliveryAddress,
+        contact: userData.phone_number,
         email: userData.email,
-        vat: userData.companyVAT,
+        vat: userData.vatNumber,
+        payment_terms: userData.payment_terms,
         companyCode: userData.companyCode
       },
       orderDetails: orderData.order_details,

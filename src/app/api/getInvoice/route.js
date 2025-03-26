@@ -1,44 +1,62 @@
 import { db } from "@/lib/firebaseConfig";
-import { doc, getDoc } from "firebase/firestore";
+import { collection, getDocs, query, where, orderBy, startAt, endAt } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
-export async function GET(req) {
+export async function POST(req) {
   try {
-    // Extract orderNumber from the query string
-    const { searchParams } = new URL(req.url);
-    const orderNumber = searchParams.get("orderNumber");
+    const { companyCode, orderNumber, dateRange, paymentStatus } = await req.json();
 
-    if (!orderNumber) {
+    if (!companyCode) {
       return NextResponse.json(
-        { error: "Missing orderNumber parameter" },
+        { error: "Missing companyCode parameter" },
         { status: 400 }
       );
     }
 
-    console.log(`📌 Fetching invoice for Order Number: ${orderNumber}`);
+    console.log(`📌 Fetching invoices for company code: ${companyCode}`);
 
-    // Fetch the invoice document from Firestore
-    const invoiceRef = doc(db, "invoices", orderNumber);
-    const invoiceSnap = await getDoc(invoiceRef);
+    // Initialize query with the required companyCode filter
+    let invoicesRef = collection(db, "invoices");
+    let q = query(invoicesRef, where("companyCode", "==", companyCode));
 
-    if (!invoiceSnap.exists()) {
-      return NextResponse.json(
-        { error: "Invoice not found" },
-        { status: 404 }
-      );
+    // Apply optional filters
+    if (orderNumber) {
+      q = query(q, where("orderNumber", "==", orderNumber));
+      console.log(`🔍 Filtered by order number: ${orderNumber}`);
     }
 
-    const invoiceData = invoiceSnap.data();
-    console.log("✅ Invoice data retrieved successfully.");
+    if (paymentStatus) {
+      q = query(q, where("payment_status", "==", paymentStatus));
+      console.log(`🔍 Filtered by payment status: ${paymentStatus}`);
+    }
 
-    return NextResponse.json({
-      message: "Invoice retrieved successfully",
-      invoiceData,
-    });
-  } catch (error) {
-    console.error("❌ Failed to retrieve invoice:", error.message);
+    if (dateRange && dateRange.from && dateRange.to) {
+      const fromDate = new Date(dateRange.from).toISOString();
+      const toDate = new Date(dateRange.to).toISOString();
+      q = query(q, orderBy("invoiceDate"), startAt(fromDate), endAt(toDate));
+      console.log(`📅 Filtered by date range: ${fromDate} to ${toDate}`);
+    }
+
+    // Execute the query
+    const snapshot = await getDocs(q);
+
+    if (snapshot.empty) {
+      return NextResponse.json({ message: "No invoices found", invoices: [] }, { status: 200 });
+    }
+
+    // Construct the response with entire invoice document
+    const invoices = snapshot.docs.map((doc) => doc.data());
+
+    console.log(`✅ Fetched ${invoices.length} invoices successfully.`);
+
     return NextResponse.json(
-      { error: "Failed to retrieve invoice", details: error.message },
+      { message: "Invoices retrieved successfully", invoices },
+      { status: 200 }
+    );
+  } catch (error) {
+    console.error("❌ Failed to retrieve invoices:", error.message);
+    return NextResponse.json(
+      { error: "Failed to retrieve invoices", details: error.message },
       { status: 500 }
     );
   }
