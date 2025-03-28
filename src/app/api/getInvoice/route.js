@@ -1,30 +1,45 @@
 import { db } from "@/lib/firebaseConfig";
-import { collection, getDocs, query, where, orderBy, startAt, endAt } from "firebase/firestore";
+import { collection, getDocs, query, where, orderBy, startAt, endAt, doc, getDoc } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
 export async function POST(req) {
   try {
     const { companyCode, orderNumber, dateRange, paymentStatus } = await req.json();
 
-    if (!companyCode) {
+    // ✅ Check if at least one of orderNumber or companyCode is provided
+    if (!orderNumber && !companyCode) {
       return NextResponse.json(
-        { error: "Missing companyCode parameter" },
+        { error: "Either orderNumber or companyCode must be provided" },
         { status: 400 }
       );
     }
 
-    console.log(`📌 Fetching invoices for company code: ${companyCode}`);
+    console.log(`📌 Fetching invoices for company code: ${companyCode || "N/A"} and order number: ${orderNumber || "N/A"}`);
 
-    // Initialize query with the required companyCode filter
-    let invoicesRef = collection(db, "invoices");
-    let q = query(invoicesRef, where("companyCode", "==", companyCode));
-
-    // Apply optional filters
+    // ✅ Directly fetch the invoice document by orderNumber if provided
     if (orderNumber) {
-      q = query(q, where("orderNumber", "==", orderNumber));
-      console.log(`🔍 Filtered by order number: ${orderNumber}`);
+      const invoiceRef = doc(db, "invoices", orderNumber);
+      const invoiceSnap = await getDoc(invoiceRef);
+
+      if (!invoiceSnap.exists()) {
+        return NextResponse.json(
+          { message: `No invoice found with order number ${orderNumber}` },
+          { status: 404 }
+        );
+      }
+
+      console.log(`✅ Fetched invoice for order number: ${orderNumber}`);
+      return NextResponse.json(
+        { message: "Invoice retrieved successfully", invoices: [invoiceSnap.data()] },
+        { status: 200 }
+      );
     }
 
+    // ✅ Fallback to querying by companyCode if orderNumber is not provided
+    let invoicesRef = collection(db, "invoices");
+    let q = query(invoicesRef, where("customer.companyCode", "==", companyCode));
+
+    // Apply optional filters
     if (paymentStatus) {
       q = query(q, where("payment_status", "==", paymentStatus));
       console.log(`🔍 Filtered by payment status: ${paymentStatus}`);

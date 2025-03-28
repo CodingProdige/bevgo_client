@@ -1,5 +1,5 @@
 import { db, storage } from "@/lib/firebaseConfig"; // Firestore & Storage
-import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { NextResponse } from "next/server";
 import ejs from "ejs";
@@ -20,6 +20,7 @@ export async function POST(req) {
       companyVAT,
       logoURL,
       paymentMethod,
+      sendEmail, // ✅ New parameter
     } = await req.json();
 
     if (!orderNumber) {
@@ -39,16 +40,28 @@ export async function POST(req) {
     const orderData = orderSnap.data();
     console.log("✅ Order details retrieved successfully.");
 
-    // ✅ Fetch the user document based on companyCode
-    const userRef = doc(db, "users", orderData.userId);
-    const userSnap = await getDoc(userRef);
+    // ✅ Try to fetch the user document based on companyCode
+    let userData = null;
+    const usersRef = collection(db, "users");
+    const usersQuery = query(usersRef, where("companyCode", "==", orderData.companyCode));
+    const usersSnapshot = await getDocs(usersQuery);
 
-    if (!userSnap.exists()) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    if (!usersSnapshot.empty) {
+      userData = usersSnapshot.docs[0].data();
+      console.log("✅ User document retrieved successfully.");
+    } else {
+      // ✅ If no user found, check the customers collection
+      const customersRef = collection(db, "customers");
+      const customersQuery = query(customersRef, where("companyCode", "==", orderData.companyCode));
+      const customersSnapshot = await getDocs(customersQuery);
+
+      if (!customersSnapshot.empty) {
+        userData = customersSnapshot.docs[0].data();
+        console.log("✅ Customer document retrieved successfully.");
+      } else {
+        return NextResponse.json({ error: "User or Customer not found" }, { status: 404 });
+      }
     }
-
-    const userData = userSnap.data();
-    console.log("✅ Customer details retrieved successfully.");
 
     // ✅ Load the EJS template
     const templatePath = path.join(process.cwd(), "src/lib/emailTemplates/invoiceTemplate.ejs");
@@ -72,7 +85,7 @@ export async function POST(req) {
         email: userData.email,
         vat: userData.vatNumber,
         payment_terms: userData.payment_terms,
-        companyCode: userData.companyCode
+        companyCode: userData.companyCode,
       },
       orderDetails: orderData.order_details,
       matchedReturnables,
@@ -88,7 +101,7 @@ export async function POST(req) {
 
     const response = await axios.post(cloudFunctionUrl, {
       htmlContent: renderedHTML,
-      fileName: pdfFileName
+      fileName: pdfFileName,
     });
 
     if (!response.data.pdfUrl) {
@@ -115,7 +128,7 @@ export async function POST(req) {
         email: userData.email,
         vat: userData.vatNumber,
         payment_terms: userData.payment_terms,
-        companyCode: userData.companyCode
+        companyCode: userData.companyCode,
       },
       orderDetails: orderData.order_details,
       matchedReturnables,
@@ -130,38 +143,49 @@ export async function POST(req) {
     console.log("✅ Invoice data saved to Firestore.");
 
     // ✅ Update Firestore order document with invoice PDF URL
-    await updateDoc(orderRef, { 
+    await updateDoc(orderRef, {
       invoicePDF: invoicePDFURL,
-      payment_terms: userData.payment_terms,
-      paymentMethod,
     });
+
     console.log(`📤 Order updated with Invoice URL: ${invoicePDFURL}`);
 
-    // ✅ Send the invoice email to the customer
-    try {
-      const emailResponse = await axios.post(`https://bevgo-client.vercel.app/api/sendEmailTemplate`, {
-        to: userData.email,
-        subject: `Invoice for Order #${orderNumber}`,
-        templateName: "sendInvoiceEmail",
-        data: {
-          orderNumber,
-          invoicePDFURL: invoicePDFURL,
-        },
-      });
+    // ✅ Conditionally send the invoice email if sendEmail is true
+    if (sendEmail) {
+      try {
+        const emailAddresses = [
+          companyEmail,
+          userData.email,
+          userData.ccEmail01,
+          userData.ccEmail02,
+          userData.ccEmail03,
+        ].filter((email) => email); // Filter out falsy values
 
-      if (emailResponse.data.error) {
-        console.error("❌ Failed to send invoice email:", emailResponse.data.error);
-      } else {
-        console.log("✅ Invoice email sent successfully!");
+        const emailResponse = await axios.post(`https://bevgo-client.vercel.app/api/sendEmailTemplate`, {
+          to: emailAddresses,
+          subject: `Invoice for Order #${orderNumber}`,
+          templateName: "sendInvoiceEmail",
+          data: {
+            orderNumber,
+            invoicePDFURL: invoicePDFURL,
+          },
+        });
+
+        if (emailResponse.data.error) {
+          console.error("❌ Failed to send invoice email:", emailResponse.data.error);
+        } else {
+          console.log("✅ Invoice email sent successfully!");
+        }
+      } catch (emailError) {
+        console.error("❌ Failed to send invoice email:", emailError.message);
       }
-    } catch (emailError) {
-      console.error("❌ Failed to send invoice email:", emailError.message);
+    } else {
+      console.log("📧 Email sending skipped as sendEmail is false.");
     }
 
     return NextResponse.json({
       message: "Invoice generated and saved successfully",
       invoicePDFURL,
-      orderNumber
+      orderNumber,
     }, { status: 200 });
 
   } catch (error) {

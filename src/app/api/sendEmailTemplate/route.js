@@ -13,8 +13,12 @@ export async function POST(req) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    // ✅ Support for multiple email addresses
+    const recipients = Array.isArray(to) ? to : [to];
+
     // ✅ Construct the correct path for the email templates
     const templatePath = path.join(process.cwd(), "src", "lib", "emailTemplates", `${templateName}.ejs`);
+
     // ✅ Check if the template file exists
     try {
       await fs.access(templatePath);
@@ -26,14 +30,25 @@ export async function POST(req) {
     const templateContent = await fs.readFile(templatePath, "utf-8");
     const emailContent = ejs.render(templateContent, data);
 
-    // ✅ Send the email
-    const result = await sendEmail(to, subject, emailContent);
+    // ✅ Send the email to all recipients
+    const results = await Promise.all(
+      recipients.map(async (recipient) => {
+        return await sendEmail(recipient, subject, emailContent);
+      })
+    );
 
-    if (result.success) {
-      return NextResponse.json({ message: "Email sent successfully!" }, { status: 200 });
-    } else {
-      return NextResponse.json({ error: "Failed to send email", details: result.error }, { status: 500 });
+    const failedEmails = results
+      .map((result, index) => (result.success ? null : recipients[index]))
+      .filter((email) => email !== null);
+
+    if (failedEmails.length > 0) {
+      return NextResponse.json(
+        { error: "Failed to send email to some recipients", failedEmails },
+        { status: 500 }
+      );
     }
+
+    return NextResponse.json({ message: "Email sent successfully to all recipients!" }, { status: 200 });
   } catch (error) {
     console.error("❌ Error in send-email API:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

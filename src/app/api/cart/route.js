@@ -7,10 +7,10 @@ const RETURNABLES_API_URL = "https://pricing.bevgo.co.za/api/getReturnables";
 
 // ✅ Mapping of product unique_codes to returnable item codes
 const returnableMappings = {
-  130: ["587", "683"],
+  130: ["247", "683", "609", "485"],
   150: ["537", "117", "617", "687"],
-  110: ["555", "883", "585", "476", "372", "808", "170", "921", "296"],
-  115: [],
+  110: [],
+  115: ["712", "965"],
   120: [],
 };
 
