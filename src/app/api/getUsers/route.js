@@ -5,18 +5,31 @@ import { NextResponse } from "next/server";
 export async function GET() {
   try {
     const usersRef = collection(db, "users");
-    const snapshot = await getDocs(usersRef);
+    const customersRef = collection(db, "customers");
 
-    // Extract user data
-    const users = snapshot.docs.map(doc => ({
+    const [userSnap, customerSnap] = await Promise.all([
+      getDocs(usersRef),
+      getDocs(customersRef),
+    ]);
+
+    const users = userSnap.docs.map(doc => ({
       id: doc.id,
-      ...doc.data()
+      type: "user",
+      ...doc.data(),
     }));
 
-    return NextResponse.json({ users }, { status: 200 });
+    const customers = customerSnap.docs.map(doc => ({
+      id: doc.id,
+      type: "customer",
+      ...doc.data(),
+    }));
+
+    const allUsers = [...users, ...customers];
+
+    return NextResponse.json({ users: allUsers }, { status: 200 });
 
   } catch (error) {
-    console.error("Error fetching users:", error);
+    console.error("❌ Error fetching users and customers:", error);
     return NextResponse.json({ error: "Failed to fetch users" }, { status: 500 });
   }
 }

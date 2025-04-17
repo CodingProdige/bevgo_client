@@ -101,26 +101,26 @@ export async function POST(req) {
     await updateDoc(userRef, { cart: [] });
 
     // 📧 ✅ Send Order Confirmation Email
-    const templatePath = path.join(process.cwd(), "src", "lib", "emailTemplates", "orderConfirmation.ejs");
+    // const templatePath = path.join(process.cwd(), "src", "lib", "emailTemplates", "orderConfirmation.ejs");
 
-    try {
-      const templateContent = await fs.readFile(templatePath, "utf-8");
-      const emailHTML = ejs.render(templateContent, {
-        companyName: userSnap.data().companyName, // ✅ Ensure company name is passed
-        orderNumber,
-        companyCode,
-        email,
-        orderDetails: cartData,
-        rebateAmount,
-        rebatePercentage,
-        orderDate: new Date().toLocaleString(), // ✅ Fix for missing `orderDate`
-      });
+    // try {
+    //   const templateContent = await fs.readFile(templatePath, "utf-8");
+    //   const emailHTML = ejs.render(templateContent, {
+    //     companyName: userSnap.data().companyName, // ✅ Ensure company name is passed
+    //     orderNumber,
+    //     companyCode,
+    //     email,
+    //     orderDetails: cartData,
+    //     rebateAmount,
+    //     rebatePercentage,
+    //     orderDate: new Date().toLocaleString(), // ✅ Fix for missing `orderDate`
+    //   });
 
-      await sendEmail(email, `Your Order Confirmation - ${orderNumber}`, emailHTML);
-      console.log(`📧 Order confirmation sent to ${email}`);
-    } catch (emailError) {
-      console.error("❌ Failed to send order confirmation email:", emailError);
-    }
+    //   await sendEmail(email, `Your Order Confirmation - ${orderNumber}`, emailHTML);
+    //   console.log(`📧 Order confirmation sent to ${email}`);
+    // } catch (emailError) {
+    //   console.error("❌ Failed to send order confirmation email:", emailError);
+    // }
 
     return NextResponse.json({
       message: "Order finalized successfully",

@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 
 // ✅ Function to determine rebate percentage based on subtotal (excluding VAT & returnables)
 function calculateRebate(subtotal) {
+  if (subtotal > 20000) return 3.0; // 2% rebate
+  if (subtotal > 15000) return 2.5; // 2% rebate
   if (subtotal > 10000) return 2.0; // 2% rebate
   if (subtotal > 5000) return 1.5;  // 1.5% rebate
   return 1.0; // Default 1% rebate

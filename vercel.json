@@ -1,0 +1,13 @@
+{
+    "crons": [
+      {
+        "path": "/api/overdueInvoices",
+        "schedule": "0 7 */2 * *"
+      },
+      {
+        "path": "/api/monthlyStatements",
+        "schedule": "0 6 28-31 * *"
+      }
+    ]
+  }
+  

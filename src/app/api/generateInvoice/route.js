@@ -8,6 +8,15 @@ import path from "path";
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 
+// 🆕 Helper function to calculate due date
+const calculateDueDate = (paymentTerms) => {
+  const daysToAdd = parseInt(paymentTerms, 10);
+  const due = new Date();
+  due.setDate(due.getDate() + (isNaN(daysToAdd) ? 0 : daysToAdd));
+  return due.toLocaleDateString();
+};
+
+
 export async function POST(req) {
   try {
     const {
@@ -77,7 +86,7 @@ export async function POST(req) {
       companyVAT,
       invoiceNumber: orderNumber,
       invoiceDate: new Date(orderData.createdAt).toLocaleDateString(),
-      dueDate: "Due on Delivery",
+      dueDate: calculateDueDate(userData.payment_terms), // ✅ dynamically calculated
       customer: {
         name: userData.companyName,
         address: userData.deliveryAddress,
@@ -134,6 +143,7 @@ export async function POST(req) {
       matchedReturnables,
       finalTotals: orderData.calcFinalTotal,
       payment_terms: userData.payment_terms,
+      dueDate: calculateDueDate(userData.payment_terms), // ✅ dynamically calculated
       paymentMethod,
       payment_status: "Pending",
     };

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Account Statement</title>
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      font-family: Arial, sans-serif;
+      font-size: 12px;
+      background-image: url("https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Watermark.png?alt=media&token=d8209c3c-1cee-4555-aad7-b21441de9721");
+      background-repeat: repeat;
+      background-size: 100% auto;
+      background-position: center;
+    }
+
+    .page {
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      gap: 1rem;
+      box-sizing: border-box;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .bevgo-details {
+      border: 1px solid black;
+      padding: 0.5rem;
+      width: 100%;
+    }
+
+    .bevgo-logo {
+      width: 250px;
+      height: auto;
+      object-fit: contain;
+    }
+
+    .details-container {
+      display: flex;
+      gap: 2rem;
+    }
+
+    .customer-section,
+    .statement-meta {
+      border: 1px solid black;
+      padding: 0.5rem;
+      width: 100%;
+    }
+
+    h3 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1rem;
+    }
+
+    .invoice-table {
+      border: 1px solid black;
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    .invoice-table th,
+    .invoice-table td {
+      border: 1px solid black;
+      padding: 8px;
+      text-align: left;
+    }
+
+    .totals {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.5rem;
+      border: 1px solid black;
+    }
+
+    .footer {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 12px;
+      color: #777;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <!-- Header -->
+    <div class="header">
+      <div class="bevgo-details">
+        <img class="bevgo-logo" src="https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Header%20Banner.png?alt=media&token=fb6ef880-b618-46c5-a1c3-e9bc1dd3690e" alt="Bevgo Logo" />
+        <div class="details-container">
+          <div>
+            <p><strong>Address:</strong> 6 Christelle Str, Denneburg, Paarl, Western Cape, South Africa, 7646</p>
+          </div>
+          <div>
+            <p><strong>Contact:</strong> 071 619 1616</p>
+            <p><strong>Email:</strong> info@bevgo.co.za</p>
+            <p><strong>VAT No:</strong> 12345678</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Statement Info -->
+    <div style="display: flex; gap: 1rem;">
+      <div class="customer-section">
+        <h3>Customer Details</h3>
+        <p><%= customer.name %></p>
+        <p><%= customer.address %></p>
+        <p><%= customer.contact %></p>
+        <p><%= customer.email %></p>
+        <p>VAT No: <%= customer.vat || "N/A" %></p>
+      </div>
+      <div class="statement-meta">
+        <h3>Statement Details</h3>
+        <p><strong>Date:</strong> <%= statementDate %></p>
+        <p><strong>Customer Code:</strong> <%= customer.companyCode %></p>
+        <p><strong>Invoices Listed:</strong> <%= invoices.length %></p>
+      </div>
+    </div>
+
+    <!-- Table of Invoices -->
+    <div>
+      <h3>Account Activity</h3>
+      <table class="invoice-table">
+        <thead>
+          <tr>
+            <th>Invoice Number</th>
+            <th>Invoice Date</th>
+            <th>Due Date</th>
+            <th>Payment</th>
+            <th>Total</th>
+            <th>PDF Link</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% invoices.forEach(inv => { %>
+            <tr>
+              <td><%= inv.orderNumber %></td>
+              <td><%= inv.invoiceDate %></td>
+              <td><%= inv.dueDate || "N/A" %></td>
+              <td><%= inv.status %></td>
+              <td><%= inv.total %></td>
+              <td><a href="<%= inv.pdfURL %>">View</a></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Totals -->
+    <div class="totals">
+      <p><strong>Total Outstanding:</strong></p>
+      <p><strong><%= totalOutstanding %></strong></p>
+    </div>
+
+    <div class="footer">
+      <p>Thank you for choosing Bevgo. Please settle all outstanding invoices within your payment terms.</p>
+    </div>
+  </div>
+</body>
+</html>

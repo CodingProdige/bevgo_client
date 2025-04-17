@@ -1,22 +1,22 @@
 import { db } from "@/lib/firebaseConfig";
-import { collection, getDocs, query, where, orderBy, startAt, endAt, doc, getDoc } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  orderBy,
+  startAt,
+  endAt,
+  doc,
+  getDoc,
+} from "firebase/firestore";
 import { NextResponse } from "next/server";
 
 export async function POST(req) {
   try {
-    const { companyCode, orderNumber, dateRange, paymentStatus } = await req.json();
+    const { companyCode, orderNumber, dateRange, paymentStatus, isAdmin } = await req.json();
 
-    // ✅ Check if at least one of orderNumber or companyCode is provided
-    if (!orderNumber && !companyCode) {
-      return NextResponse.json(
-        { error: "Either orderNumber or companyCode must be provided" },
-        { status: 400 }
-      );
-    }
-
-    console.log(`📌 Fetching invoices for company code: ${companyCode || "N/A"} and order number: ${orderNumber || "N/A"}`);
-
-    // ✅ Directly fetch the invoice document by orderNumber if provided
+    // ✅ Fetch invoice by orderNumber if provided
     if (orderNumber) {
       const invoiceRef = doc(db, "invoices", orderNumber);
       const invoiceSnap = await getDoc(invoiceRef);
@@ -35,11 +35,24 @@ export async function POST(req) {
       );
     }
 
-    // ✅ Fallback to querying by companyCode if orderNumber is not provided
+    // ✅ Build base query
     let invoicesRef = collection(db, "invoices");
-    let q = query(invoicesRef, where("customer.companyCode", "==", companyCode));
+    let q;
 
-    // Apply optional filters
+    if (isAdmin === true) {
+      q = query(invoicesRef);
+      console.log("🔐 Admin access: Fetching all invoices.");
+    } else if (companyCode) {
+      q = query(invoicesRef, where("customer.companyCode", "==", companyCode));
+    } else {
+      // No companyCode or isAdmin — return empty array with 200
+      return NextResponse.json(
+        { message: "No parameters provided, returning empty result.", invoices: [] },
+        { status: 200 }
+      );
+    }
+
+    // ✅ Apply optional filters
     if (paymentStatus) {
       q = query(q, where("payment_status", "==", paymentStatus));
       console.log(`🔍 Filtered by payment status: ${paymentStatus}`);
@@ -52,18 +65,16 @@ export async function POST(req) {
       console.log(`📅 Filtered by date range: ${fromDate} to ${toDate}`);
     }
 
-    // Execute the query
+    // ✅ Execute query
     const snapshot = await getDocs(q);
 
     if (snapshot.empty) {
       return NextResponse.json({ message: "No invoices found", invoices: [] }, { status: 200 });
     }
 
-    // Construct the response with entire invoice document
     const invoices = snapshot.docs.map((doc) => doc.data());
 
     console.log(`✅ Fetched ${invoices.length} invoices successfully.`);
-
     return NextResponse.json(
       { message: "Invoices retrieved successfully", invoices },
       { status: 200 }

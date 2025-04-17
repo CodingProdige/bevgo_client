@@ -6,23 +6,33 @@ export async function POST(req) {
   try {
     const body = await req.json();
     const companyCode = body?.companyCode || null;
+    const isAdmin = body?.isAdmin || false;
 
-    console.log("🔎 Received companyCode:", companyCode);
+    console.log("🔎 Params => companyCode:", companyCode, "| isAdmin:", isAdmin);
 
-    // ✅ Query Firestore for orders
     const ordersRef = collection(db, "orders");
-    let ordersQuery = companyCode
-      ? query(ordersRef, where("companyCode", "==", companyCode)) // Filter by companyCode
-      : query(ordersRef); // Fetch all orders if no companyCode is provided
+    let ordersQuery;
 
-    console.log("📡 Fetching orders from Firestore...");
+    if (isAdmin === true) {
+      ordersQuery = query(ordersRef);
+      console.log("🔐 Admin access: fetching all orders.");
+    } else if (companyCode) {
+      ordersQuery = query(ordersRef, where("companyCode", "==", companyCode));
+      console.log(`📦 Fetching orders for companyCode: ${companyCode}`);
+    } else {
+      console.log("⚠️ No companyCode or isAdmin provided — returning empty result.");
+      return NextResponse.json(
+        { message: "No parameters provided, returning empty result.", orders: [] },
+        { status: 200 }
+      );
+    }
+
     const querySnapshot = await getDocs(ordersQuery);
 
     if (querySnapshot.empty) {
       console.log("⚠️ No orders found!");
     }
 
-    // ✅ Extract order data
     const orders = querySnapshot.docs.map(doc => ({
       orderId: doc.id,
       ...doc.data(),
