@@ -11,9 +11,7 @@ export async function GET(req) {
     const isTest = url.searchParams.get("test") === "true";
 
     const invoicesRef = collection(db, "invoices");
-    const snapshot = await getDocs(
-      query(invoicesRef, where("payment_status", "==", "Pending"))
-    );
+    const snapshot = await getDocs(query(invoicesRef, where("payment_status", "==", "Pending")));
 
     const overdueMap = {};
     const today = new Date();
@@ -23,7 +21,10 @@ export async function GET(req) {
       const dueDate = new Date(data.dueDate);
       const customerEmail = data.customer?.email;
 
-      if (customerEmail && dueDate < today) {
+      const isEFT = data.paymentMethod === "EFT";
+      const isOverdue = isEFT && dueDate < today;
+
+      if (customerEmail && isOverdue) {
         if (!overdueMap[customerEmail]) {
           overdueMap[customerEmail] = [];
         }
@@ -70,7 +71,6 @@ export async function GET(req) {
           emailLogs.push({ email, invoices });
         }
       } else {
-        // In test mode, just simulate
         emailLogs.push({ email, invoices });
       }
     }
@@ -93,11 +93,10 @@ export async function GET(req) {
     const internalRecipient = isTest ? "dillonjurgens@gmail.com" : "info@bevgo.co.za";
     await sendEmail(internalRecipient, "Overdue Invoice Log", internalLogHtml);
 
-    // Slack summary
-    const slackMsg = `📢 *${isTest ? "TEST" : "PRODUCTION"} Overdue Invoice Report:* ${emailLogs.length} customer(s) processed.\nEmails: ${emailLogs.map(e => e.email).join(", ")}`;
-    await sendSlackMessage(slackMsg);
+    await sendSlackMessage(
+      `📢 *${isTest ? "TEST" : "PRODUCTION"} Overdue Invoice Report:* ${emailLogs.length} customer(s) processed.\nEmails: ${emailLogs.map(e => e.email).join(", ")}`
+    );
 
-    // Firestore audit log
     await addDoc(collection(db, "emailLogs"), {
       type: "overdue_invoice_notification",
       timestamp: new Date(),

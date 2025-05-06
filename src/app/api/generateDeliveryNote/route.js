@@ -1,4 +1,4 @@
-import { db } from "@/lib/firebaseConfig"; // Firestore
+import { db } from "@/lib/firebaseConfig";
 import { doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { NextResponse } from "next/server";
 import ejs from "ejs";
@@ -17,7 +17,6 @@ export async function POST(req) {
 
     console.log(`📌 Fetching order details for Order Number: ${orderNumber}`);
 
-    // ✅ Fetch the order document
     const orderRef = doc(db, "orders", orderNumber);
     const orderSnap = await getDoc(orderRef);
 
@@ -30,7 +29,6 @@ export async function POST(req) {
 
     let userData = null;
 
-    // ✅ Fetch the user document based on companyCode from the order
     const usersRef = collection(db, "users");
     const userQuery = query(usersRef, where("companyCode", "==", orderData.companyCode));
     const userSnap = await getDocs(userQuery);
@@ -41,7 +39,6 @@ export async function POST(req) {
     } else {
       console.log("❌ User not found, checking customers collection...");
 
-      // ✅ Check the customers collection if user document not found
       const customersRef = collection(db, "customers");
       const customerQuery = query(customersRef, where("companyCode", "==", orderData.companyCode));
       const customerSnap = await getDocs(customerQuery);
@@ -54,7 +51,8 @@ export async function POST(req) {
       }
     }
 
-    // ✅ Generate QR Code
+    console.log("✅ Final userData used in delivery note:", userData);
+
     const qrResponse = await axios.post("https://bevgo-client.vercel.app/api/generateQRCode", {
       value: orderNumber,
     });
@@ -64,15 +62,14 @@ export async function POST(req) {
     }
 
     const qrCodeURL = qrResponse.data.qrCodeURL;
-    console.log(`✅ QR Code generated successfully: ${qrCodeURL}`);
 
-    // ✅ Load the EJS template
     const templatePath = path.join(process.cwd(), "src/lib/emailTemplates/deliveryNote.ejs");
     const templateContent = fs.readFileSync(templatePath, "utf-8");
 
-    // ✅ Render the HTML with EJS
+    const orderDetails = orderData?.order_details ?? {};
+
     const renderedHTML = ejs.render(templateContent, {
-      qrCodeURL: qrCodeURL,
+      qrCodeURL,
       logoURL: "https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Header%20Banner.png?alt=media&token=fb6ef880-b618-46c5-a1c3-e9bc1dd3690e",
       companyName: "Bevgo Distributions",
       companyAddress: "6 Christelle Str, Denneburg, Paarl, Western Cape, South Africa, 7646",
@@ -82,29 +79,28 @@ export async function POST(req) {
       deliveryNoteNumber: orderNumber,
       deliveryNoteDate: new Date(orderData.createdAt).toLocaleDateString(),
       customer: {
-        name: userData.companyName,
-        address: userData.deliveryAddress,
-        contact: userData.phone_number,
-        email: userData.email,
-        vat: userData.vatNumber,
-        payment_terms: userData.payment_terms,
-        companyCode: userData.companyCode
+        name: userData?.companyName || "",
+        address: userData?.deliveryAddress || "",
+        contact: userData?.phone_number || "",
+        email: userData?.email || "",
+        vat: (typeof userData?.vatNumber === "number" || /^\d+$/.test(userData?.vatNumber)) ? userData.vatNumber : "",
+        payment_terms: userData?.payment_terms || "",
+        companyCode: userData?.companyCode || "",
       },
-      cartDetails: orderData.order_details.cartDetails,
-      subtotal: orderData.order_details.subtotal,
-      total: orderData.order_details.total,
-      vat: orderData.order_details.vat,
-      rebatePercentage: orderData.order_details.rebatePercentage,
-      returnableSubtotal: orderData.order_details.returnableSubtotal,
-      subtotalAfterRebate: orderData.order_details.subtotalAfterRebate,
-      subtotalIncludingReturnables: orderData.order_details.subtotalIncludingReturnables,
-      totalItems: orderData.order_details.totalItems,
-      rebateAmount: orderData.order_details.rebateAmount,
+      cartDetails: orderDetails.cartDetails || [],
+      subtotal: orderDetails.subtotal || 0,
+      total: orderDetails.total || 0,
+      vat: orderDetails.vat || 0,
+      rebatePercentage: orderDetails.rebatePercentage || 0,
+      returnableSubtotal: orderDetails.returnableSubtotal || 0,
+      subtotalAfterRebate: orderDetails.subtotalAfterRebate || 0,
+      subtotalIncludingReturnables: orderDetails.subtotalIncludingReturnables || 0,
+      totalItems: orderDetails.totalItems || 0,
+      rebateAmount: orderDetails.rebateAmount || 0,
     });
 
     console.log("✅ Delivery Note HTML rendered successfully.");
 
-    // ✅ Generate PDF via Cloud Function
     const pdfFileName = `dn-${orderNumber}`;
     const cloudFunctionUrl = "https://generatepdf-th2kiymgaa-uc.a.run.app";
 
@@ -118,11 +114,9 @@ export async function POST(req) {
     }
 
     const deliveryNotePDFURL = response.data.pdfUrl;
-    console.log(`✅ PDF generated successfully: ${deliveryNotePDFURL}`);
 
-    // ✅ Save delivery note data to Firestore in the "deliveryNotes" collection
     const deliveryNoteData = {
-      qrCodeURL: qrCodeURL,
+      qrCodeURL,
       logoURL: "https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Header%20Banner.png?alt=media&token=fb6ef880-b618-46c5-a1c3-e9bc1dd3690e",
       companyName: "Bevgo Distributions",
       companyAddress: "6 Christelle Str, Denneburg, Paarl, Western Cape, South Africa, 7646",
@@ -132,35 +126,32 @@ export async function POST(req) {
       deliveryNoteNumber: orderNumber,
       deliveryNoteDate: new Date(orderData.createdAt).toLocaleDateString(),
       customer: {
-        name: userData.companyName,
-        address: userData.deliveryAddress,
-        contact: userData.phone_number,
-        email: userData.email,
-        vat: userData.vatNumber,
-        payment_terms: userData.payment_terms,
-        companyCode: userData.companyCode
+        name: userData?.companyName || "",
+        address: userData?.deliveryAddress || "",
+        contact: userData?.phone_number || "",
+        email: userData?.email || "",
+        vat: (typeof userData?.vatNumber === "number" || /^\d+$/.test(userData?.vatNumber)) ? userData.vatNumber : "",
+        payment_terms: userData?.payment_terms || "",
+        companyCode: userData?.companyCode || "",
       },
-      cartDetails: orderData.order_details.cartDetails,
-      subtotal: orderData.order_details.subtotal,
-      total: orderData.order_details.total,
-      vat: orderData.order_details.vat,
-      rebatePercentage: orderData.order_details.rebatePercentage,
-      returnableSubtotal: orderData.order_details.returnableSubtotal,
-      subtotalAfterRebate: orderData.order_details.subtotalAfterRebate,
-      subtotalIncludingReturnables: orderData.order_details.subtotalIncludingReturnables,
-      totalItems: orderData.order_details.totalItems,
-      rebateAmount: orderData.order_details.rebateAmount,
+      cartDetails: orderDetails.cartDetails || [],
+      subtotal: orderDetails.subtotal || 0,
+      total: orderDetails.total || 0,
+      vat: orderDetails.vat || 0,
+      rebatePercentage: orderDetails.rebatePercentage || 0,
+      returnableSubtotal: orderDetails.returnableSubtotal || 0,
+      subtotalAfterRebate: orderDetails.subtotalAfterRebate || 0,
+      subtotalIncludingReturnables: orderDetails.subtotalIncludingReturnables || 0,
+      totalItems: orderDetails.totalItems || 0,
+      rebateAmount: orderDetails.rebateAmount || 0,
     };
 
     const deliveryNoteRef = doc(db, "deliveryNotes", orderNumber);
     await setDoc(deliveryNoteRef, deliveryNoteData);
-    console.log("✅ Delivery Note data saved to Firestore.");
 
-    // ✅ Update Firestore order document with delivery note PDF URL
     await updateDoc(orderRef, {
       deliveryNotePDF: deliveryNotePDFURL,
     });
-    console.log(`📤 Order updated with Delivery Note URL: ${deliveryNotePDFURL}`);
 
     return NextResponse.json({
       message: "Delivery note generated and saved successfully",
