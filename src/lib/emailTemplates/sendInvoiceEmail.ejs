@@ -9,6 +9,17 @@
     p { margin: 0.5em 0; }
     a { color: #007bff; text-decoration: none; }
 
+    .unsubscribe {
+      font-size: 0.9em;
+      color: #888;
+      margin-top: 2em;
+      border-top: 1px solid #ddd;
+      padding-top: 1em;
+    }
+    .unsubscribe a {
+      color: #888;
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>
@@ -17,5 +28,9 @@
   <p>You can view or download your invoice using the link below:</p>
   <a href="<%= invoicePDFURL %>" class="link-button">View Your Invoice</a>
   <p>We appreciate your business! 🚀</p>
+
+  <div class="unsubscribe">
+    <p>If you'd like to stop receiving future emails, you can <a href="https://client-portal.bevgo.co.za/unsubscribe">unsubscribe here</a>.</p>
+  </div>
 </body>
 </html>

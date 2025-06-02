@@ -1,17 +1,32 @@
 <h2>Thank You, <%= companyName %>! 🎉</h2>
-<p>Your order <strong>#<%= orderNumber %></strong> has been placed successfully on <%= orderDate %>.</p>
+<p>Your order <strong>#<%= orderNumber %></strong> was placed successfully on <%= orderDate %>.</p>
 
 <h3>Order Summary:</h3>
 <ul>
   <% orderDetails.cartDetails.forEach(item => { %>
     <li>
-      <strong><%= item.product_title %></strong> - <%= item.quantity %> x R<%= item.price_per_unit_incl.toFixed(2) %>
+      <strong><%= item.product_title %></strong> - <%= item.quantity %> x R<%= Number(item.price_excl || 0).toFixed(2) %>
     </li>
   <% }); %>
 </ul>
 
-<p>Subtotal: R<%= orderDetails.subtotal.toFixed(2) %></p>
-<p>Rebate (<%= rebatePercentage %>%): -R<%= rebateAmount.toFixed(2) %></p>
-<p>Total: <strong>R<%= orderDetails.total.toFixed(2) %></strong></p>
+<p>Subtotal: R<%= Number(orderDetails.subtotal || 0).toFixed(2) %></p>
+<p>
+  Rebate (<%= typeof rebatePercentage !== 'undefined' ? rebatePercentage : '0' %>%): 
+  -R<%= Number(rebateAmount || 0).toFixed(2) %>
+</p>
+<p>
+  Total: <strong>R<%= Number(orderDetails.total || 0).toFixed(2) %></strong>
+</p>
 
 <p>Thank you for shopping with us! 🚀</p>
+<br/><br/>
+
+<div style="font-size: 0.9em; color: #888; margin-top: 2em; border-top: 1px solid #ddd; padding-top: 1em;">
+  <p>
+    If you'd like to stop receiving future emails, you can 
+    <a href="https://client-portal.bevgo.co.za/unsubscribe" style="color: #888; text-decoration: underline;">
+      unsubscribe here
+    </a>.
+  </p>
+</div>

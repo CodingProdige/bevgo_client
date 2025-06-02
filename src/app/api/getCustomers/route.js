@@ -7,7 +7,7 @@ export async function GET(req) {
     const { searchParams } = new URL(req.url);
     const includeAll = searchParams.get("all") === "true";
 
-    // Fetch customers
+    // Fetch customers (no filtering applied)
     const customersSnap = await getDocs(collection(db, "customers"));
     const customers = customersSnap.docs.map((doc) => ({
       id: doc.id,
@@ -16,13 +16,12 @@ export async function GET(req) {
 
     let users = [];
 
-    // Conditionally fetch users if `all=true`
+    // Fetch and filter users only if `all=true`
     if (includeAll) {
       const usersSnap = await getDocs(collection(db, "users"));
-      users = usersSnap.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      users = usersSnap.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .filter((user) => user.onboarding_complete === true);
     }
 
     if (customers.length === 0 && users.length === 0) {

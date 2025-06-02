@@ -27,17 +27,15 @@ export async function POST(req) {
 
     let rawInvoices = invoicesSnap.docs.map(doc => doc.data());
 
-    // Optional filtering by date range with safety checks
+    // Optional filtering by date range
     const validFromDate = fromDate && fromDate !== "null" ? new Date(fromDate) : null;
     const validToDate = toDate && toDate !== "null" ? new Date(toDate) : null;
 
     if (validFromDate || validToDate) {
       rawInvoices = rawInvoices.filter(inv => {
         const invDate = new Date(inv.invoiceDate);
-
         if (validFromDate) validFromDate.setHours(0, 0, 0, 0);
         if (validToDate) validToDate.setHours(23, 59, 59, 999);
-
         return (!validFromDate || invDate >= validFromDate) && (!validToDate || invDate <= validToDate);
       });
     }
@@ -51,6 +49,9 @@ export async function POST(req) {
       return NextResponse.json({ error: "No matching invoices found" }, { status: 404 });
     }
 
+    // Sort by invoiceDate descending
+    rawInvoices.sort((a, b) => new Date(b.invoiceDate) - new Date(a.invoiceDate));
+
     const customer = rawInvoices[0].customer;
     let totalOutstanding = 0;
 
@@ -61,6 +62,14 @@ export async function POST(req) {
       }).format(value);
     };
 
+    const formatDate = (dateStr) => {
+      return new Date(dateStr).toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "long",
+        year: "numeric"
+      });
+    };
+
     const invoices = rawInvoices.map(inv => {
       const totalStr = inv.finalTotals?.finalTotal || inv.orderDetails?.total;
       const total = parseFloat(totalStr) || 0;
@@ -69,8 +78,8 @@ export async function POST(req) {
       }
       return {
         orderNumber: inv.orderNumber,
-        invoiceDate: new Date(inv.invoiceDate).toLocaleDateString(),
-        dueDate: inv.dueDate || "N/A",
+        invoiceDate: formatDate(inv.invoiceDate),
+        dueDate: inv.dueDate ? formatDate(inv.dueDate) : "N/A",
         status: inv.payment_status || "N/A",
         total: formatCurrency(total),
         pdfURL: inv.invoicePDFURL
@@ -88,7 +97,7 @@ export async function POST(req) {
       companyVAT: rawInvoices[0].companyVAT,
       invoices,
       totalOutstanding: formatCurrency(totalOutstanding),
-      statementDate: now.toLocaleDateString()
+      statementDate: formatDate(now)
     });
 
     const statementId = uuidv4();
@@ -109,7 +118,7 @@ export async function POST(req) {
 
     if (sendToCustomer || alternativeEmail) {
       const toAddress = alternativeEmail || customer.email;
-      const subject = `Requested Account Statement - ${now.toLocaleDateString()}`;
+      const subject = `Requested Account Statement - ${formatDate(now)}`;
       const htmlMessage = `
         <p>Hi ${customer.name},</p>
         <p>Here is your requested account statement. You can view or download it using the link below:</p>

@@ -37,42 +37,101 @@ export async function POST(req) {
 
     // ✅ Build base query
     let invoicesRef = collection(db, "invoices");
-    let q;
+    let constraints = [];
 
-    if (isAdmin === true) {
-      q = query(invoicesRef);
+    // 🔐 Admin with companyCode = filter by companyCode
+    if (isAdmin && companyCode) {
+      constraints.push(where("customer.companyCode", "==", companyCode));
+      console.log(`🔐 Admin access: Filtering by companyCode: ${companyCode}`);
+    }
+
+    // 👤 Non-admin with companyCode = filter by companyCode
+    else if (!isAdmin && companyCode) {
+      constraints.push(where("customer.companyCode", "==", companyCode));
+    }
+
+    // 🔐 Admin with no companyCode = fetch all invoices (no constraints)
+    else if (isAdmin && !companyCode) {
       console.log("🔐 Admin access: Fetching all invoices.");
-    } else if (companyCode) {
-      q = query(invoicesRef, where("customer.companyCode", "==", companyCode));
-    } else {
-      // No companyCode or isAdmin — return empty array with 200
+    }
+
+    // ❌ No valid criteria = return empty
+    else {
       return NextResponse.json(
         { message: "No parameters provided, returning empty result.", invoices: [] },
         { status: 200 }
       );
     }
 
-    // ✅ Apply optional filters
-    if (paymentStatus) {
-      q = query(q, where("payment_status", "==", paymentStatus));
-      console.log(`🔍 Filtered by payment status: ${paymentStatus}`);
-    }
-
-    if (dateRange && dateRange.from && dateRange.to) {
+    // ✅ Apply date range if both from & to provided
+    if (dateRange?.from && dateRange?.to) {
       const fromDate = new Date(dateRange.from).toISOString();
       const toDate = new Date(dateRange.to).toISOString();
-      q = query(q, orderBy("invoiceDate"), startAt(fromDate), endAt(toDate));
+      constraints.push(orderBy("invoiceDate"));
+      constraints.push(startAt(fromDate));
+      constraints.push(endAt(toDate));
       console.log(`📅 Filtered by date range: ${fromDate} to ${toDate}`);
     }
 
+    // ❌ Avoid Firestore filter if Overdue
+    if (paymentStatus && paymentStatus !== "Overdue") {
+      constraints.push(where("payment_status", "==", paymentStatus));
+      console.log(`🔍 Firestore filter: payment_status == ${paymentStatus}`);
+    }
+
     // ✅ Execute query
+    const q = constraints.length > 0 ? query(invoicesRef, ...constraints) : invoicesRef;
     const snapshot = await getDocs(q);
 
     if (snapshot.empty) {
       return NextResponse.json({ message: "No invoices found", invoices: [] }, { status: 200 });
     }
 
-    const invoices = snapshot.docs.map((doc) => doc.data());
+    // ✅ Map results
+    let invoices = snapshot.docs.map((doc) => doc.data());
+
+    // ✅ Apply Overdue logic
+    if (paymentStatus === "Overdue") {
+      const now = new Date();
+      let cutoffDate = now;
+
+      if (dateRange?.to) {
+        const parsedTo = new Date(dateRange.to);
+        if (!isNaN(parsedTo)) {
+          cutoffDate = parsedTo;
+        }
+      }
+
+      invoices = invoices.filter((invoice) => {
+        const status = (invoice.payment_status || "").toLowerCase();
+
+        let due = null;
+
+        if (typeof invoice.dueDate === "string") {
+          const parts = invoice.dueDate.split("/");
+          if (parts.length === 3) {
+            const [m, d, y] = parts.map(Number);
+            due = new Date(y, m - 1, d);
+          } else {
+            due = new Date(Date.parse(invoice.dueDate));
+          }
+        } else {
+          due = new Date(invoice.dueDate);
+        }
+
+        const isValid = due instanceof Date && !isNaN(due);
+        const isOverdue = isValid && due < cutoffDate && status !== "paid" && status !== "pending";
+
+        // 🐞 Debug logs
+        console.log(
+          `📆 Due: ${isValid ? due.toISOString() : "Invalid"}, Status: ${status}, Overdue: ${isOverdue}`
+        );
+
+        return isOverdue;
+      });
+
+      console.log(`⚠️ Filtered overdue invoices before ${cutoffDate.toISOString()}, excluding Paid and Pending`);
+    }
 
     console.log(`✅ Fetched ${invoices.length} invoices successfully.`);
     return NextResponse.json(

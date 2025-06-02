@@ -29,7 +29,6 @@ export async function POST(req) {
     const body = await req.json();
     const { from, to, accountType } = body;
 
-    // ✅ Use new names to avoid conflict
     const fromDate = normalizeInputDate(from);
     const toDate = normalizeInputDate(to);
     const filterAccountType = accountType && accountType.trim() !== "" ? accountType : null;
@@ -74,6 +73,13 @@ export async function POST(req) {
           totalCommissionAll += data.totalCommission;
         }
       }
+    });
+
+    // Sort by deliveredDate (newest first)
+    results.sort((a, b) => {
+      const aSec = a?.deliveredDate?.seconds || 0;
+      const bSec = b?.deliveredDate?.seconds || 0;
+      return bSec - aSec;
     });
 
     return NextResponse.json({
