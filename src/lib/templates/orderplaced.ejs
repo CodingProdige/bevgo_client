@@ -1,0 +1,23 @@
+<% const htmlBody = `
+  <p>Hi <strong>${companyName}</strong>,</p>
+
+  <p>Your order has been delivered successfully!</p>
+  <p>You can now view the invoice on your client dashboard or download it using the link below.</p>
+
+  <table style="margin: 16px 0;">
+    <tr><td><strong>Invoice Number:</strong></td><td>${invoiceNumber}</td></tr>
+    <tr><td><strong>Date:</strong></td><td>${invoiceDate}</td></tr>
+    <tr><td><strong>Total:</strong></td><td>R${invoiceTotal}</td></tr>
+  </table>
+
+  <p>
+    You can view or download your invoice here:<br/>
+    <a href="${invoiceUrl}" target="_blank">View Invoice</a>
+  </p>
+
+  <p>This is an automated message. Please do not reply to this email.</p>
+
+  <p>Regards,<br/>Bevgo Team</p>
+`; %>
+
+<%- include("_layout", { subject, body: htmlBody, unsubscribeUrl }) %>

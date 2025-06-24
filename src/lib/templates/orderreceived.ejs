@@ -1,0 +1,14 @@
+<% const htmlBody = `
+  <p>Hello Admin,</p>
+
+  <p>A new order has been received from <strong>${companyName}</strong>.</p>
+
+  <p>Order Number: <strong>#${orderNumber}</strong><br/>
+  Total Value: <strong>R${orderTotal}</strong></p>
+
+  <p>Please process the order in the admin dashboard.</p>
+
+  <p>Regards,<br/>Bevgo System</p>
+`; %>
+
+<%- include("_layout", { subject, body: htmlBody, unsubscribeUrl }) %>

@@ -1,14 +1,46 @@
+/**
+ * ✅ Finalize Order Endpoint
+ *
+ * This endpoint:
+ * - Receives a `userId` and `companyCode` from the client
+ * - Fetches the matching user/customer document using the companyCode
+ * - Fetches the user's cart totals from the cartTotals API
+ * - Calculates applicable rebate based on subtotal
+ * - Generates a unique 8-digit order number
+ * - Creates a new order document in the "orders" collection
+ * - Clears the cart for the user with the matching `userId`
+ *
+ * Expected payload:
+ * {
+ *   userId: string,
+ *   companyCode: string,
+ *   payment_terms?: string
+ * }
+ *
+ * Returns:
+ * - Order number, rebate info, order total, and customer details
+ */
+
+
 import path from "path";
 import { promises as fs } from "fs";
 import ejs from "ejs";
 import { sendEmail } from "@/lib/emailService";
 import { db } from "@/lib/firebaseConfig";
-import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
+import {
+  doc,
+  setDoc,
+  getDoc,
+  updateDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+} from "firebase/firestore";
 import { NextResponse } from "next/server";
 
 const CART_TOTALS_API_URL = "https://bevgo-client.vercel.app/api/cartTotals";
 
-// ✅ Function to generate an 8-digit unique order number
 async function generateUniqueOrderNumber() {
   let orderNumber;
   let exists = true;
@@ -17,16 +49,13 @@ async function generateUniqueOrderNumber() {
     orderNumber = `${Math.floor(10000000 + Math.random() * 90000000)}`;
     const orderRef = doc(db, "orders", orderNumber);
     const orderSnap = await getDoc(orderRef);
-
-    if (!orderSnap.exists()) {
-      exists = false; 
-    }
+    exists = orderSnap.exists();
   }
   return orderNumber;
 }
 
-// ✅ Function to determine rebate percentage based on subtotal (excluding VAT & returnables)
 function calculateRebate(subtotal) {
+  if (subtotal > 15000) return 3.0;
   if (subtotal > 10000) return 2.0;
   if (subtotal > 5000) return 1.5;
   return 1.0;
@@ -34,23 +63,41 @@ function calculateRebate(subtotal) {
 
 export async function POST(req) {
   try {
-    const { userId, payment_terms, customerCode } = await req.json();
+    const { userId, payment_terms, companyCode: rawCompanyCode } = await req.json();
 
     if (!userId) {
-      return NextResponse.json({ error: "Missing userId or payment_terms" }, { status: 400 });
+      return NextResponse.json({ error: "Missing userId" }, { status: 400 });
     }
 
-    // ✅ Fetch user details to get companyCode
-    const userRef = doc(db, "users", userId);
-    const userSnap = await getDoc(userRef);
-
-    if (!userSnap.exists()) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
-
-    const { companyCode, email } = userSnap.data();
+    const companyCode = rawCompanyCode?.trim();
     if (!companyCode) {
-      return NextResponse.json({ error: "Company code not found" }, { status: 400 });
+      return NextResponse.json({ error: "Missing companyCode" }, { status: 400 });
+    }
+
+    // ✅ Try find user by companyCode (in users or customers)
+    let userSnap;
+    const usersQuery = query(collection(db, "users"), where("companyCode", "==", companyCode));
+    const userResults = await getDocs(usersQuery);
+
+    if (!userResults.empty) {
+      userSnap = userResults.docs[0];
+    } else {
+      const customersQuery = query(collection(db, "customers"), where("companyCode", "==", companyCode));
+      const customerResults = await getDocs(customersQuery);
+
+      if (!customerResults.empty) {
+        userSnap = customerResults.docs[0];
+      } else {
+        return NextResponse.json({ error: "User not found for provided companyCode" }, { status: 404 });
+      }
+    }
+
+    const userData = userSnap.data();
+    const { email, companyName, emailOptOut } = userData;
+
+    let finalPaymentTerms = payment_terms?.trim() || userData?.payment_terms;
+    if (!finalPaymentTerms) {
+      finalPaymentTerms = userData?.payment_terms || null;
     }
 
     // ✅ Fetch cart totals
@@ -65,23 +112,21 @@ export async function POST(req) {
     }
 
     const cartData = await response.json();
+
     if (cartData.totalItems === 0) {
       return NextResponse.json({ error: "Cart is empty" }, { status: 400 });
     }
 
-    // ✅ Calculate rebate
     const rebatePercentage = calculateRebate(cartData.subtotal);
     const rebateAmount = (cartData.subtotal * rebatePercentage) / 100;
 
-    // ✅ Generate unique order number
     const orderNumber = await generateUniqueOrderNumber();
 
-    // ✅ Save order to Firestore
     const orderDetails = {
       orderNumber,
       userId,
-      companyCode: customerCode ? customerCode : companyCode,
-      payment_terms,
+      companyCode,
+      payment_terms: finalPaymentTerms ?? "0",
       order_status: "Pending",
       createdAt: new Date().toISOString(),
       pickingSlipPDF: null,
@@ -94,39 +139,22 @@ export async function POST(req) {
       payment_status: "Pending",
     };
 
-    const orderRef = doc(db, "orders", orderNumber);
-    await setDoc(orderRef, orderDetails);
+    // ✅ Save order
+    await setDoc(doc(db, "orders", orderNumber), orderDetails);
 
-    // ✅ Clear user's cart
-    await updateDoc(userRef, { cart: [] });
-
-    // 📧 ✅ Send Order Confirmation Email
-    // const templatePath = path.join(process.cwd(), "src", "lib", "emailTemplates", "orderConfirmation.ejs");
-
-    // try {
-    //   const templateContent = await fs.readFile(templatePath, "utf-8");
-    //   const emailHTML = ejs.render(templateContent, {
-    //     companyName: userSnap.data().companyName, // ✅ Ensure company name is passed
-    //     orderNumber,
-    //     companyCode,
-    //     email,
-    //     orderDetails: cartData,
-    //     rebateAmount,
-    //     rebatePercentage,
-    //     orderDate: new Date().toLocaleString(), // ✅ Fix for missing `orderDate`
-    //   });
-
-    //   await sendEmail(email, `Your Order Confirmation - ${orderNumber}`, emailHTML);
-    //   console.log(`📧 Order confirmation sent to ${email}`);
-    // } catch (emailError) {
-    //   console.error("❌ Failed to send order confirmation email:", emailError);
-    // }
+    // ✅ Clear the cart for the correct user ID (not just company match)
+    const cartUserRef = doc(db, "users", userId);
+    await updateDoc(cartUserRef, { cart: [] });
 
     return NextResponse.json({
       message: "Order finalized successfully",
       orderNumber,
       rebatePercentage,
       rebateAmount,
+      orderTotal: cartData.total ?? cartData.subtotal ?? 0,
+      companyName,
+      companyEmail: email,
+      emailOptOut: emailOptOut ?? false,
     }, { status: 201 });
 
   } catch (error) {

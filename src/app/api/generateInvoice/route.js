@@ -196,6 +196,10 @@ export async function POST(req) {
       message: "Invoice generated and saved successfully",
       invoicePDFURL,
       orderNumber,
+      companyName: userData?.companyName,
+      customerEmail: userData?.email,
+      invoiceTotal: orderData.calcFinalTotal.finalTotal,
+      invoiceDate: invoiceData.invoiceDate
     }, { status: 200 });
 
   } catch (error) {

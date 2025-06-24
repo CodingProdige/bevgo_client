@@ -1,0 +1,18 @@
+<% 
+const subject = `Payment Received — Invoice #${invoiceNumber} Settled`;
+const htmlBody = `
+  <p>Hi <strong>${companyName}</strong>,</p>
+
+  <p>We’ve received your payment for <strong>Invoice #${invoiceNumber}</strong>.</p>
+
+  <p>Amount Paid: <strong>R${invoiceTotal.toFixed(2)}</strong><br/>
+
+  <p>Thank you for settling your invoice. Your account balance will be updated accordingly.</p>
+
+  <p>For any queries, feel free to reach out.</p>
+
+  <p>Regards,<br/>Bevgo Accounts</p>
+`; 
+%>
+
+<%- include("_layout", { subject, body: htmlBody, unsubscribeUrl }) %>
