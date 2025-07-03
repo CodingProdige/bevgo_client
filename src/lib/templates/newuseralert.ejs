@@ -1,0 +1,9 @@
+<% const htmlBody = `
+    <p>A new user has just signed up on the Bevgo platform:</p>
+    <p><strong>Email:</strong> ${email}</p>
+
+
+  <p>This is an automated alert. No action is needed unless flagged.</p>
+`; %>
+
+<%- include("_layout", { subject, body: htmlBody }) %>

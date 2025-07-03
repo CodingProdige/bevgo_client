@@ -1,0 +1,5 @@
+<% const htmlBody = `
+  <p><strong>${companyName}</strong> has reordered <strong>Order #${orderNumber}</strong>.</p>
+`; %>
+
+<%- include("_layout", { subject, body: htmlBody, unsubscribeUrl }) %>

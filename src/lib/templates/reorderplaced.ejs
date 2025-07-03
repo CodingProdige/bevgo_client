@@ -1,0 +1,13 @@
+<% const htmlBody = `
+  <p>Hi <strong>${companyName}</strong>,</p>
+
+  <p>Your reorder for <strong>Order #${orderNumber}</strong> has been placed successfully.</p>
+
+  <p>We’ll notify you as soon as it's being processed and ready for delivery.</p>
+
+  <p>Thanks for choosing Bevgo again!</p>
+
+  <p>Regards,<br/>Bevgo Team</p>
+`; %>
+
+<%- include("_layout", { subject, body: htmlBody, unsubscribeUrl }) %>

@@ -1,0 +1,24 @@
+<% const htmlBody = `
+  <p>Hi there,</p>
+
+  <p>The following invoice(s) on your account are now <strong>overdue</strong>:</p>
+
+  <ul>
+    ${invoices.map(inv => `
+      <li style="margin-bottom: 12px;">
+        <strong>Order #${inv.orderNumber}</strong><br/>
+        Due Date: ${inv.dueDate}<br/>
+        Amount: R${inv.total} | Items: ${inv.itemCount}<br/>
+        <a href="${inv.invoicePDFURL}">📄 View Invoice PDF</a>
+      </li>
+    `).join("")}
+  </ul>
+
+  <p><strong>Important:</strong> If you're making a bulk payment, please use your customer number <strong>${companyCode}</strong> as the payment reference.</p>
+
+  <p>Please arrange payment at your earliest convenience. If you've already settled, kindly disregard this email.</p>
+
+  <p>Regards,<br/>Bevgo Finance Team</p>
+`; %>
+
+<%- include("_layout", { subject, body: htmlBody, unsubscribeUrl }) %>

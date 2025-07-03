@@ -63,44 +63,61 @@ function calculateRebate(subtotal) {
 
 export async function POST(req) {
   try {
-    const { userId, payment_terms, companyCode: rawCompanyCode } = await req.json();
+    console.log("🔍 Incoming request to /api/finalizeOrder");
 
-    if (!userId) {
+    let body;
+    try {
+      body = await req.json();
+    } catch (err) {
+      console.error("❌ Failed to parse JSON body:", await req.text());
+      return NextResponse.json({ error: "Malformed JSON in request body" }, { status: 400 });
+    }
+
+    const { userId, payment_terms, companyCode } = body;
+
+    console.log("✅ Parsed body:", { userId, companyCode, payment_terms });
+
+    if (!userId?.trim()) {
+      console.warn("⚠️ Missing userId");
       return NextResponse.json({ error: "Missing userId" }, { status: 400 });
     }
 
-    const companyCode = rawCompanyCode?.trim();
-    if (!companyCode) {
+    if (!companyCode?.trim()) {
+      console.warn("⚠️ Missing companyCode");
       return NextResponse.json({ error: "Missing companyCode" }, { status: 400 });
     }
 
-    // ✅ Try find user by companyCode (in users or customers)
+    // Try find user by companyCode
+    console.log("🔎 Searching for user by companyCode:", companyCode);
     let userSnap;
     const usersQuery = query(collection(db, "users"), where("companyCode", "==", companyCode));
     const userResults = await getDocs(usersQuery);
 
     if (!userResults.empty) {
       userSnap = userResults.docs[0];
+      console.log("✅ Found user in 'users' collection");
     } else {
       const customersQuery = query(collection(db, "customers"), where("companyCode", "==", companyCode));
       const customerResults = await getDocs(customersQuery);
 
       if (!customerResults.empty) {
         userSnap = customerResults.docs[0];
+        console.log("✅ Found user in 'customers' collection");
       } else {
+        console.warn("❌ No user found for companyCode:", companyCode);
         return NextResponse.json({ error: "User not found for provided companyCode" }, { status: 404 });
       }
     }
 
     const userData = userSnap.data();
     const { email, companyName, emailOptOut } = userData;
+    console.log("📦 Retrieved user data:", { companyName, email });
 
-    let finalPaymentTerms = payment_terms?.trim() || userData?.payment_terms;
-    if (!finalPaymentTerms) {
-      finalPaymentTerms = userData?.payment_terms || null;
-    }
+    let finalPaymentTerms = payment_terms?.trim() || userData?.payment_terms || null;
+    console.log("📌 Final payment terms:", finalPaymentTerms);
 
-    // ✅ Fetch cart totals
+    // Fetch cart totals
+    console.log("🔁 Fetching cart totals from:", CART_TOTALS_API_URL);
     const response = await fetch(CART_TOTALS_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -108,19 +125,25 @@ export async function POST(req) {
     });
 
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ Failed to fetch cart totals:", response.status, errorText);
       return NextResponse.json({ error: "Failed to fetch cart totals" }, { status: 500 });
     }
 
     const cartData = await response.json();
+    console.log("🛒 Cart data received:", cartData);
 
     if (cartData.totalItems === 0) {
+      console.warn("🚫 Cart is empty");
       return NextResponse.json({ error: "Cart is empty" }, { status: 400 });
     }
 
     const rebatePercentage = calculateRebate(cartData.subtotal);
     const rebateAmount = (cartData.subtotal * rebatePercentage) / 100;
+    console.log("💸 Rebate calculated:", { rebatePercentage, rebateAmount });
 
     const orderNumber = await generateUniqueOrderNumber();
+    console.log("📦 Generated order number:", orderNumber);
 
     const orderDetails = {
       orderNumber,
@@ -139,12 +162,12 @@ export async function POST(req) {
       payment_status: "Pending",
     };
 
-    // ✅ Save order
     await setDoc(doc(db, "orders", orderNumber), orderDetails);
+    console.log("✅ Order saved to Firestore");
 
-    // ✅ Clear the cart for the correct user ID (not just company match)
     const cartUserRef = doc(db, "users", userId);
     await updateDoc(cartUserRef, { cart: [] });
+    console.log("🧹 Cleared user cart");
 
     return NextResponse.json({
       message: "Order finalized successfully",
@@ -158,7 +181,7 @@ export async function POST(req) {
     }, { status: 201 });
 
   } catch (error) {
-    console.error("❌ Error finalizing order:", error);
+    console.error("❌ Unexpected error:", error.message);
     return NextResponse.json({ error: "Something went wrong", details: error.message }, { status: 500 });
   }
 }

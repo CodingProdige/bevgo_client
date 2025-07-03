@@ -1,14 +1,22 @@
 import { db } from "@/lib/firebaseConfig";
 import { collection, getDocs, query, where, addDoc } from "firebase/firestore";
-import { sendEmail } from "@/lib/emailService";
 import { sendSlackMessage } from "@/lib/slackService";
-import { format } from "date-fns";
 import { NextResponse } from "next/server";
+
+// Format: "1 July 2025"
+function formatDateReadable(date) {
+  return date.toLocaleDateString("en-ZA", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
 
 export async function GET(req) {
   try {
     const url = new URL(req.url);
     const isTest = url.searchParams.get("test") === "true";
+    const testRecipient = url.searchParams.get("testRecipient");
 
     const invoicesRef = collection(db, "invoices");
     const snapshot = await getDocs(query(invoicesRef, where("payment_status", "==", "Pending")));
@@ -31,7 +39,7 @@ export async function GET(req) {
 
         overdueMap[customerEmail].push({
           orderNumber: data.orderNumber,
-          dueDate: format(dueDate, "yyyy-MM-dd"),
+          dueDate: dueDate.toLocaleDateString("en-ZA"),
           invoicePDFURL: data.invoicePDFURL,
           total: data.finalTotals?.finalTotal || data.orderDetails?.total || "N/A",
           itemCount: data.orderDetails?.totalItems || 0,
@@ -40,62 +48,55 @@ export async function GET(req) {
       }
     });
 
-    const emailedCustomers = [];
     const emailLogs = [];
 
-    for (const email in overdueMap) {
-      const invoices = overdueMap[email];
+    let recipientsToProcess = [];
 
-      const htmlBody = `
-        <h2>Overdue Invoice Reminder</h2>
-        <p>The following invoices on your account are now overdue:</p>
-        <ul>
-          ${invoices.map(
-            (inv) => `
-              <li>
-                <strong>Order #${inv.orderNumber}</strong> - Due: ${inv.dueDate} <br/>
-                Total: R${inv.total} | Items: ${inv.itemCount} <br/>
-                <a href="${inv.invoicePDFURL}">📄 View Invoice PDF</a>
-              </li>`
-          ).join("")}
-        </ul>
-        <p><strong>Note:</strong> If you're making a bulk payment, please use your customer number <strong>${invoices[0].companyCode}</strong> as your payment reference.</p>
-        <p>Please arrange payment at your earliest convenience. If you've already settled, kindly disregard this email.</p>
-        <p>Thank you, <br />Bevgo Finance Team</p>
-      `;
-
-      if (!isTest) {
-        const result = await sendEmail(email, "Overdue Invoice Notice", htmlBody);
-        if (result.success) {
-          emailedCustomers.push(email);
-          emailLogs.push({ email, invoices });
-        }
-      } else {
-        emailLogs.push({ email, invoices });
+    if (isTest && testRecipient) {
+      // Bundle all invoices into one test email
+      const allInvoices = Object.values(overdueMap).flat();
+      if (allInvoices.length > 0) {
+        recipientsToProcess.push({
+          email: testRecipient,
+          invoices: allInvoices,
+        });
       }
+    } else {
+      // One real email per customer
+      recipientsToProcess = Object.entries(overdueMap).map(([email, invoices]) => ({
+        email,
+        invoices,
+      }));
     }
 
-    // Internal log summary
-    const internalLogHtml = `
-      <h2>🧾 Overdue Invoice Notification Summary - ${format(new Date(), "yyyy-MM-dd HH:mm")}</h2>
-      <p>Mode: ${isTest ? "🧪 TEST" : "🚀 PRODUCTION"}</p>
-      <p>Customers processed:</p>
-      ${emailLogs.map(
-        (entry) => `
-          <h4>${entry.email}</h4>
-          <ul>
-            ${entry.invoices.map((inv) => `<li>#${inv.orderNumber} - Due: ${inv.dueDate} - R${inv.total}</li>`).join("")}
-          </ul>
-        `
-      ).join("")}
-    `;
+    for (const { email, invoices } of recipientsToProcess) {
+      if (invoices.length === 0) continue;
 
-    const internalRecipient = isTest ? "dillonjurgens@gmail.com" : "info@bevgo.co.za";
-    await sendEmail(internalRecipient, "Overdue Invoice Log", internalLogHtml);
+      const payload = {
+        to: email,
+        subject: `Overdue Invoice Notice — ${formatDateReadable(new Date())}`,
+        template: "overdueinvoice",
+        data: {
+          invoices,
+          companyCode: invoices[0].companyCode || "TESTCODE",
+        },
+        emailOptOut: false,
+        unsubscribeUrl: `https://client-portal.bevgo.co.za/unsubscribe`,
+      };
 
-    await sendSlackMessage(
-      `📢 *${isTest ? "TEST" : "PRODUCTION"} Overdue Invoice Report:* ${emailLogs.length} customer(s) processed.\nEmails: ${emailLogs.map(e => e.email).join(", ")}`
-    );
+      const res = await fetch(`${process.env.BASE_URL}/api/sendEmail`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        emailLogs.push({ email, invoices });
+      } else {
+        const errorBody = await res.json();
+        console.error(`❌ Failed to email ${email}:`, errorBody);
+      }
+    }
 
     await addDoc(collection(db, "emailLogs"), {
       type: "overdue_invoice_notification",
@@ -107,9 +108,17 @@ export async function GET(req) {
       })),
     });
 
+    await sendSlackMessage(
+      `📢 *${isTest ? "TEST" : "PRODUCTION"} Overdue Invoice Report:* ${emailLogs.length} customer(s) processed.\n${emailLogs.map(e => `• ${e.email}`).join("\n")}`
+    );
+
     return NextResponse.json({
-      message: isTest ? "✅ Test mode: No client emails sent." : "✅ Notifications sent to customers.",
-      customersNotified: emailedCustomers.length,
+      message: isTest
+        ? testRecipient
+          ? `✅ Test mode: Email sent to test recipient (${testRecipient}).`
+          : "✅ Test mode: No testRecipient specified — no emails sent."
+        : "✅ Notifications sent to all customers with overdue invoices.",
+      customersNotified: emailLogs.length,
       customers: emailLogs.map((e) => e.email),
     });
 

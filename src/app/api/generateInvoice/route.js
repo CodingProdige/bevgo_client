@@ -79,11 +79,11 @@ export async function POST(req) {
     // ✅ Render the HTML with EJS
     const renderedHTML = ejs.render(templateContent, {
       logoURL,
-      companyName,
-      companyAddress,
-      companyContact,
-      companyEmail,
-      companyVAT,
+      companyName: "Bevgo Distributions",
+      companyAddress: "Unit 2, 4 EK Green Str. Charleston Hill, Paarl, Western Cape, South Africa, 7646",
+      companyContact: "071 619 1616",
+      companyEmail: "info@bevgo.co.za",
+      companyVAT: 4760314296,
       invoiceNumber: orderNumber,
       invoiceDate: new Date(orderData.createdAt).toLocaleDateString(),
       dueDate: calculateDueDate(userData.payment_terms), // ✅ dynamically calculated
@@ -125,11 +125,11 @@ export async function POST(req) {
       orderNumber,
       invoicePDFURL,
       invoiceDate: new Date().toISOString(),
-      companyName,
-      companyAddress,
-      companyContact,
-      companyEmail,
-      companyVAT,
+      companyName: "Bevgo Distributions",
+      companyAddress: "Unit 2, 4 EK Green Str. Charleston Hill, Paarl, Western Cape, South Africa, 7646",
+      companyContact: "071 619 1616",
+      companyEmail: "info@bevgo.co.za",
+      companyVAT: 4760314296,
       customer: {
         name: userData?.companyName || "",
         address: userData?.deliveryAddress || "",

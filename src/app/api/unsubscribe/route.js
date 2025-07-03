@@ -19,7 +19,7 @@ export async function GET(req) {
 
     if (!userSnapshot.empty) {
       const userDoc = userSnapshot.docs[0];
-      await updateDoc(doc(db, "users", userDoc.id), { unsubscribed: true });
+      await updateDoc(doc(db, "users", userDoc.id), { emailOptOut: true });
     }
 
     return new Response(

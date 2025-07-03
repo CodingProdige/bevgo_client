@@ -1,0 +1,24 @@
+<%- include("_layout", {
+    subject,
+    body: `
+      <p style="font-size: 18px; font-weight: bold; margin-bottom: 12px;">Your Final Invoice is Ready</p>
+  
+      <p>Hi <strong><%= companyName %></strong>,</p>
+  
+      <p>Your delivery has been completed and your final invoice has been generated.</p>
+  
+      <table style="margin: 16px 0;">
+        <tr><td><strong>Invoice Number:</strong></td><td><%= invoiceNumber %></td></tr>
+        <tr><td><strong>Date:</strong></td><td><%= invoiceDate %></td></tr>
+        <tr><td><strong>Total:</strong></td><td>R<%= invoiceTotal %></td></tr>
+      </table>
+  
+      <p>
+        You can view or download your invoice here:<br/>
+        <a href="<%= invoiceUrl %>" target="_blank">📎 View Invoice</a>
+      </p>
+  
+      <p>This is an automated message from Bevgo. Please do not reply to this email.</p>
+    `
+  }) %>
+  

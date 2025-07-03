@@ -83,28 +83,31 @@ export async function POST(req) {
     console.log(`✅ Order duplicated successfully: ${newOrderNumber}`);
 
     // ✅ Send order confirmation email
-    try {
-      const templatePath = path.join(process.cwd(), "src/lib/emailTemplates/orderConfirmation.ejs");
-      const templateContent = await fs.readFile(templatePath, "utf-8");
-      const emailHTML = ejs.render(templateContent, {
-        companyName: companyCode,
-        orderNumber: newOrderNumber,
-        orderDate: newOrderData.createdAt,
-        orderDetails: order_details,
-        rebatePercentage, // ✅ Pass rebatePercentage explicitly
-        rebateAmount, // ✅ Pass rebateAmount explicitly
-      });
+    // try {
+    //   const templatePath = path.join(process.cwd(), "src/lib/emailTemplates/orderConfirmation.ejs");
+    //   const templateContent = await fs.readFile(templatePath, "utf-8");
+    //   const emailHTML = ejs.render(templateContent, {
+    //     companyName: companyCode,
+    //     orderNumber: newOrderNumber,
+    //     orderDate: newOrderData.createdAt,
+    //     orderDetails: order_details,
+    //     rebatePercentage, // ✅ Pass rebatePercentage explicitly
+    //     rebateAmount, // ✅ Pass rebateAmount explicitly
+    //   });
 
-      console.log(`📧 Sending order confirmation email to ${email}`);
-      await sendEmail(email, `Order Confirmation - ${newOrderNumber}`, emailHTML);
-      console.log("✅ Order confirmation email sent successfully!");
-    } catch (emailError) {
-      console.error("❌ Failed to send email:", emailError);
-    }
+    //   console.log(`📧 Sending order confirmation email to ${email}`);
+    //   await sendEmail(email, `Order Confirmation - ${newOrderNumber}`, emailHTML);
+    //   console.log("✅ Order confirmation email sent successfully!");
+    // } catch (emailError) {
+    //   console.error("❌ Failed to send email:", emailError);
+    // }
 
     return NextResponse.json({
       message: "Order duplicated successfully and email sent",
+      customerEmail: email,
       newOrderNumber,
+      companyName: userData.companyName,
+      companyCode: userData.companyCode
     }, { status: 201 });
 
   } catch (error) {

@@ -1,0 +1,15 @@
+<% const htmlBody = `
+  <p>Hi there,</p>
+
+  <p>Welcome to Bevgo — your tech-powered beverage supplier!</p>
+
+  <p>Your account has been successfully created. You can now log in to place orders, track deliveries, and enjoy our automated rebate system designed for smart businesses like yours.</p>
+
+  <p>If you have any questions, just head to our support page or reach out via the app.</p>
+
+  <p>Thanks for joining us.</p>
+
+  <p>Regards,<br/>Bevgo Team</p>
+`; %>
+
+<%- include("_layout", { subject, body: htmlBody, unsubscribeUrl }) %>

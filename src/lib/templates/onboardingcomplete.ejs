@@ -1,0 +1,21 @@
+<% const htmlBody = `
+  <p>Hi <strong>${companyName}</strong>,</p>
+
+  <p>Your onboarding is complete, and your account is now fully activated.</p>
+
+  <p>You can now:</p>
+  <ul>
+    <li>Place orders directly through the Bevgo app</li>
+    <li>Track your deliveries in real time</li>
+    <li>Earn rebates automatically on qualifying orders</li>
+    <li>Access your invoices and statements any time</li>
+  </ul>
+
+  <p>Thanks for choosing Bevgo — we’re excited to have you on board.</p>
+
+  <p>Need help or have questions? Our support team is just a click away in the app.</p>
+
+  <p>Regards,<br/>Bevgo Team</p>
+`; %>
+
+<%- include("_layout", { subject, body: htmlBody, unsubscribeUrl }) %>
