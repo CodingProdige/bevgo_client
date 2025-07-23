@@ -283,7 +283,7 @@
                         </div>
                         <div class="order-product-title"><%= item.product_title %></div>
                         <div class="order-quantity"><%= item.quantity %></div>
-                        <div class="order-unit-price">R<%= item.price_excl.toFixed(2) %></div>
+                        <div class="order-unit-price">R<%= item.on_sale && item.sale_price ? item.sale_price.toFixed(2) : item.price_excl.toFixed(2) %></div>
                         <div class="order-total">R<%= item.total_price.toFixed(2) %></div>
                     </div>
                 <% }) %>
@@ -291,7 +291,7 @@
         </div>
 
         <!-- Returnable Items (Columned List with Headings) -->
-        <div class="return-items">
+        <!-- <div class="return-items">
             <h3>Returnables Collected</h3>
             <div class="item item-heading">
                 <div class="heading-product-title">Product</div>
@@ -311,14 +311,41 @@
                     </div>
                 <% }) %>
             </div>
-        </div>
+        </div> -->
+
+        <% if (matchedReturnables && matchedReturnables.matchedReturnables && matchedReturnables.matchedReturnables.length > 0) { %>
+          <!-- Returnable Items (Columned List with Headings) -->
+          <div class="return-items">
+              <h3>Returnables Collected</h3>
+              <div class="item item-heading">
+                  <div class="heading-product-title">Product</div>
+                  <div class="heading-return-type">Return Type</div>
+                  <div class="heading-quantity">QTY</div>
+                  <div class="heading-unit-price">Unit Price (VAT Excl.)</div>
+                  <div class="heading-total">Total</div>
+              </div>
+              <div class="return-item-list">
+                  <% matchedReturnables.matchedReturnables.forEach(returnable => { %>
+                      <div class="item">
+                          <div class="return-product-title"><%= returnable.product_type %> <%= returnable.product_size %></div>
+                          <div class="return-return-type"><%= returnable.return_type %></div>
+                          <div class="return-quantity"><%= returnable.quantity %></div>
+                          <div class="return-unit-price">R<%= returnable.price.toFixed(2) %></div>
+                          <div class="return-total">R<%= (returnable.price * returnable.quantity).toFixed(2) %></div>
+                      </div>
+                  <% }) %>
+              </div>
+          </div>
+          <% } %>
+          
 
         <!-- Totals -->
         <div class="totals-container">
           <div class="bank-details">
             <h3>Bank Details:</h3>
-            <p>Account holder: ORDER WATER (PTY) Ltd</p>
-            <p>Account number: 1254897909</p>
+            <p>Account holder: BEVGO (PTY) Ltd</p>
+            <p>Bank: Nedbank</p>
+            <p>Account number: 1318880823</p>
             <p>Account type: Current account</p>
             <p>Branch code: 198765</p>
           </div>
