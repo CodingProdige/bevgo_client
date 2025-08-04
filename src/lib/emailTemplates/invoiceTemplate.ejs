@@ -290,53 +290,35 @@
             </div>
         </div>
 
-        <!-- Returnable Items (Columned List with Headings) -->
-        <!-- <div class="return-items">
+        <!-- Returnables -->
+        <% if (returns && returns.length > 0) { %>
+          <div class="return-items">
             <h3>Returnables Collected</h3>
             <div class="item item-heading">
-                <div class="heading-product-title">Product</div>
-                <div class="heading-return-type">Return Type</div>
-                <div class="heading-quantity">QTY</div>
-                <div class="heading-unit-price">Unit Price (VAT Excl.)</div>
-                <div class="heading-total">Total</div>
+              <div class="heading-product-title">Product</div>
+              <div class="heading-return-type">Return Type</div>
+              <div class="heading-quantity">QTY</div>
+              <div class="heading-unit-price">Unit Price (VAT Excl.)</div>
+              <div class="heading-total">Total</div>
             </div>
             <div class="return-item-list">
-                <% matchedReturnables.matchedReturnables.forEach(returnable => { %>
-                    <div class="item">
-                        <div class="return-product-title"><%= returnable.product_type %> <%= returnable.product_size %></div>
-                        <div class="return-return-type"><%= returnable.return_type %></div>
-                        <div class="return-quantity"><%= returnable.quantity %></div>
-                        <div class="return-unit-price">R<%= returnable.price.toFixed(2) %></div>
-                        <div class="return-total">R<%= (returnable.price * returnable.quantity).toFixed(2) %></div>
-                    </div>
-                <% }) %>
+              <% returns.forEach(returnable => { %>
+                <div class="item">
+                  <div class="return-product-title"><%= returnable.returnable_item %> <%= returnable.volume || '' %><%= returnable.volume_unit || '' %></div>
+                  <div class="return-return-type"><%= returnable.is_full ? 'Full' : 'Partial' %></div>
+                  <div class="return-quantity"><%= returnable.quantity %></div>
+                  <div class="return-unit-price">
+                    R<%= ((returnable.is_full ? returnable.price_excl : returnable.partial_price_excl) || 0).toFixed(2) %>
+                  </div>
+                  <div class="return-total">
+                    R<%= ((((returnable.is_full ? returnable.price_excl : returnable.partial_price_excl) || 0) * returnable.quantity).toFixed(2)) %>
+                  </div>
+                </div>
+              <% }) %>
             </div>
-        </div> -->
-
-        <% if (matchedReturnables && matchedReturnables.matchedReturnables && matchedReturnables.matchedReturnables.length > 0) { %>
-          <!-- Returnable Items (Columned List with Headings) -->
-          <div class="return-items">
-              <h3>Returnables Collected</h3>
-              <div class="item item-heading">
-                  <div class="heading-product-title">Product</div>
-                  <div class="heading-return-type">Return Type</div>
-                  <div class="heading-quantity">QTY</div>
-                  <div class="heading-unit-price">Unit Price (VAT Excl.)</div>
-                  <div class="heading-total">Total</div>
-              </div>
-              <div class="return-item-list">
-                  <% matchedReturnables.matchedReturnables.forEach(returnable => { %>
-                      <div class="item">
-                          <div class="return-product-title"><%= returnable.product_type %> <%= returnable.product_size %></div>
-                          <div class="return-return-type"><%= returnable.return_type %></div>
-                          <div class="return-quantity"><%= returnable.quantity %></div>
-                          <div class="return-unit-price">R<%= returnable.price.toFixed(2) %></div>
-                          <div class="return-total">R<%= (returnable.price * returnable.quantity).toFixed(2) %></div>
-                      </div>
-                  <% }) %>
-              </div>
           </div>
-          <% } %>
+        <% } %>
+        
           
 
         <!-- Totals -->

@@ -21,7 +21,6 @@ export async function POST(req) {
   try {
     const {
       orderNumber,
-      matchedReturnables,
       companyName,
       companyAddress,
       companyContact,
@@ -30,6 +29,7 @@ export async function POST(req) {
       logoURL,
       paymentMethod,
       sendEmail, // ✅ New parameter
+      returns,
     } = await req.json();
 
     if (!orderNumber) {
@@ -97,9 +97,9 @@ export async function POST(req) {
         companyCode: userData?.companyCode || "",
       },
       orderDetails: orderData.order_details,
-      matchedReturnables,
       finalTotals: orderData.calcFinalTotal,
       paymentMethod,
+      returns,
     });
 
     console.log("✅ Invoice HTML rendered successfully.");
@@ -140,12 +140,12 @@ export async function POST(req) {
         companyCode: userData?.companyCode || "",
       },
       orderDetails: orderData.order_details,
-      matchedReturnables,
       finalTotals: orderData.calcFinalTotal,
       payment_terms: userData.payment_terms,
       dueDate: calculateDueDate(userData.payment_terms), // ✅ dynamically calculated
       paymentMethod,
       payment_status: "Pending",
+      returns,
     };
 
     const invoiceRef = doc(db, "invoices", orderNumber);
