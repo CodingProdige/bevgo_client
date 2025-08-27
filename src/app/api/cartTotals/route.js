@@ -38,7 +38,11 @@ export async function POST(req) {
         ? parseFloat(item.sale_price)
         : parseFloat(item.price_excl) || 0;
 
-      const returnablePrice = parseFloat(item.returnable_item_price_excl_vat) || 0;
+      const returnablePrice =
+        item.assigned_returnable?.price_excl
+          ? parseFloat(item.assigned_returnable.price_excl)
+          : 0;
+
       const totalPrice = priceExclVAT * quantity;
 
       subtotalExclVAT += totalPrice;

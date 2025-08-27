@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Stock Reorder Plan</title>
+  <style>
+    /* --- Global / Theme --- */
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      font-family: Arial, sans-serif; font-size: 12px;
+      background-image: url("https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Watermark.png?alt=media&token=d8209c3c-1cee-4555-aad7-b21441de9721");
+      background-repeat: repeat; background-size: 100% auto; background-position: center;
+    }
+    p { margin: 0; }
+    h3 { margin: 0 0 0.5rem 0; font-size: 1rem; }
+    .page {
+      display: flex; flex-direction: column; gap: 1rem;
+      height: 100%; padding: 20px; box-sizing: border-box; background: transparent;
+    }
+
+    /* --- Header block (mirrors invoice) --- */
+    .header {
+      display: flex; flex-direction: row; gap: 1rem; width: 100%; align-items: stretch;
+    }
+    .bevgo-details, .summary-box {
+      border: 1px solid black; padding: 0.5rem; width: 100%;
+      display: flex; flex-direction: column; gap: 0.5rem;
+    }
+    .bevgo-logo { width: 250px; height: auto; object-fit: contain; }
+    .details-container { display: flex; flex-direction: row; gap: 2rem; }
+    .details-address, .details-contact { display: flex; flex-direction: column; flex: 1; }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px 10px;
+      font-size: 12px;
+    }
+    .summary-grid strong { font-weight: 700; }
+
+    /* --- Section: Customer/Meta note --- */
+    .note {
+      border: 1px solid black; padding: 0.5rem; font-style: italic;
+      background: rgba(255,255,255,0.6);
+    }
+
+    /* --- Vendor table --- */
+    .vendor-wrap { border: 1px solid black; padding: 0.5rem; margin-top: 0.5rem; }
+    .vendor-title { font-weight: 700; margin-bottom: 0.4rem; }
+    .badge { border: 1px solid black; padding: 1px 6px; border-radius: 999px; font-size: 10px; margin-left: 6px; }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid black; padding: 6px 4px; vertical-align: top; }
+    th { background: rgba(0,0,0,0.03); text-align: left; font-weight: bold; font-size: 11px; }
+    .right { text-align: right; }
+    .nowrap { white-space: nowrap; }
+    .tiny { font-size: 10px; color: #555; }
+
+    /* Product cell with image */
+    .prod-cell { display: grid; grid-template-columns: 32px 1fr; gap: 6px; }
+    .prod-img {
+      width: 32px; height: 32px; object-fit: contain; border: 1px solid black;
+      background: white;
+    }
+    .muted { color: #555; }
+
+    /* Totals */
+    .subtotal, .grand {
+      text-align: right; font-weight: 700; margin-top: 6px;
+    }
+    .grand { border-top: 1px solid black; padding-top: 6px; margin-top: 10px; }
+
+    /* Footer */
+    .foot { margin-top: 12px; border-top: 1px dashed black; padding-top: 8px; color: #555; font-size: 10px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <!-- Header (Bevgo banner + company info / summary) -->
+    <div class="header">
+      <div class="bevgo-details">
+        <img class="bevgo-logo"
+             src="<%= meta.bannerUrl || 'https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Header%20Banner.png?alt=media&token=fb6ef880-b618-46c5-a1c3-e9bc1dd3690e' %>"
+             alt="Company Banner" />
+        <div class="details-container">
+          <div class="details-address">
+            <% if (meta.companyAddress) { %><p><%= meta.companyAddress %></p><% } %>
+          </div>
+          <div class="details-contact">
+            <% if (meta.companyContact) { %><p><%= meta.companyContact %></p><% } %>
+            <% if (meta.companyEmail)   { %><p><%= meta.companyEmail %></p><% } %>
+            <% if (meta.companyVAT)     { %><p>VAT No: <%= meta.companyVAT %></p><% } %>
+          </div>
+        </div>
+      </div>
+
+      <div class="summary-box">
+        <h3>Stock Reorder Plan</h3>
+        <div class="summary-grid">
+          <div><strong>Generated:</strong></div><div><%= meta.generatedLocal %></div>
+          <div><strong>Forecast Period:</strong></div><div><%= meta.days %> day(s)</div>
+          <div><strong>Mood:</strong></div><div><%= meta.mood %></div>
+          <% if (meta.companyCode) { %><div><strong>Company:</strong></div><div><%= meta.companyCode %></div><% } %>
+          <% if (meta.countryCode) { %><div><strong>Country:</strong></div><div><%= meta.countryCode %></div><% } %>
+          <div><strong>Returnables:</strong></div>
+          <div><%= meta.includeReturnables ? ('Included (' + (meta.returnableMode || 'partial') + ')') : 'Excluded' %></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Guidance note -->
+    <!-- <div class="note">
+      Quantities are in <strong>cases</strong> and use your formula:
+      <em>order = forecast − on&nbsp;hand + safety</em>.
+      Order values are estimated from supplier case price (excl. VAT)
+      <% if (meta.includeReturnables) { %>and include returnable deposits (<%= meta.returnableMode %>) where applicable.<% } %>
+    </div> -->
+
+    <% 
+      let grand = 0;
+      const vendorKeys = Object.keys(rowsByVendor);
+      if (vendorKeys.length === 0) { 
+    %>
+      <p>No lines require ordering for the selected horizon and mood.</p>
+    <% } %>
+
+    <% vendorKeys.forEach(function(vendor){
+         const items = rowsByVendor[vendor] || [];
+         let subtotal = 0;
+    %>
+      <div class="vendor-wrap">
+        <div class="vendor-title">
+          Brand: <%= vendor %>
+          <% if (leadTimes && leadTimes[vendor] != null) { %>
+            <span class="badge">Lead time: <%= leadTimes[vendor] %> day(s)</span>
+          <% } %>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width:8%;">Code</th>
+              <th style="width:40%;">Product</th>
+              <th style="width:8%;">Pack</th>
+              <th class="right" style="width:8%;">On&nbsp;Hand (cases)</th>
+              <th class="right" style="width:8%;">Forecast (cases)</th>
+              <th class="right" style="width:8%;">Safety (cases)</th>
+              <th class="right" style="width:8%;">Order (cases)</th>
+              <th class="right" style="width:12%;">Value (excl)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% items.forEach(function(it){
+                 subtotal += (it.estimatedOrderValueExcl || 0);
+            %>
+              <tr>
+                <td class="nowrap"><%= it.uniqueCode %></td>
+                <td>
+                  <div class="prod-cell">
+                    <div>
+                      <% if (it.imageUrl) { %>
+                        <img class="prod-img" src="<%= it.imageUrl %>" alt="">
+                      <% } else { %>
+                        <div class="prod-img" style="display:flex;align-items:center;justify-content:center;color:#777;">—</div>
+                      <% } %>
+                    </div>
+                    <div>
+                      <div><strong><%= (it.brand ? it.brand + ' – ' : '') + it.title %></strong></div>
+                      <% if (it.unitsPerCase) { %>
+                        <div class="muted tiny">Units/Case: <%= it.unitsPerCase %></div>
+                      <% } %>
+                      <% if (typeof it.casePriceExcl === 'number') { %>
+                        <div class="muted tiny">Case Price (excl): R <%= it.casePriceExcl.toFixed(2) %></div>
+                      <% } %>
+                      <% if (typeof it.depositPerCaseExcl === 'number') { %>
+                        <div class="muted tiny">Deposit (per case): R <%= it.depositPerCaseExcl.toFixed(2) %> <% if (meta.includeReturnables) { %>— included<% } %></div>
+                      <% } %>
+                      <% if (typeof it.totalCasePriceExcl === 'number') { %>
+                        <div class="muted tiny">Total per case used: R <%= it.totalCasePriceExcl.toFixed(2) %></div>
+                      <% } %>
+                    </div>
+                  </div>
+                </td>
+                <td class="nowrap"><%= it.packSize || '-' %></td>
+                <td class="right"><%= (typeof it.onHandCases === 'number') ? it.onHandCases : '-' %></td>
+                <td class="right"><%= (typeof it.forecastCases === 'number') ? it.forecastCases : '-' %></td>
+                <td class="right"><%= (typeof it.safetyCases === 'number') ? it.safetyCases : '-' %></td>
+                <td class="right">
+                  <% if (typeof it.orderCases === 'number') { %>
+                    <%= it.orderCases %>
+                    <% if (typeof it.orderUnits === 'number' && it.unitsPerCase) { %>
+                      <div class="tiny muted">(<%= it.orderUnits %> units)</div>
+                    <% } %>
+                  <% } else { %>
+                    -
+                  <% } %>
+                </td>
+                <td class="right">
+                  <% if (typeof it.estimatedOrderValueExcl === 'number') { %>
+                    R <%= it.estimatedOrderValueExcl.toFixed(2) %>
+                  <% } else { %>
+                    -
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+
+        <div class="subtotal">
+          Brand Subtotal (excl VAT): R <%= subtotal.toFixed(2) %>
+          <% if (meta.includeReturnables) { %>
+            <span class="tiny"> (includes deposits where applicable)</span>
+          <% } %>
+        </div>
+        <% grand += subtotal; %>
+      </div>
+    <% }) %>
+
+    <% if (vendorKeys.length > 0) { %>
+      <div class="grand">
+        Grand Total (excl VAT): R <%= grand.toFixed(2) %>
+        <% if (meta.includeReturnables) { %>
+          <span class="tiny"> (includes deposits where applicable)</span>
+        <% } %>
+      </div>
+    <% } %>
+
+    <div class="foot">
+      Generated automatically by Bevgo. This document is intended for purchasing planning and may differ from final supplier invoices.
+    </div>
+  </div>
+</body>
+</html>

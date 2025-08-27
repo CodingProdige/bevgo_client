@@ -320,7 +320,13 @@
                         <div class="order-product-title"><%= item.product_title %></div>
                         <div class="order-quantity"><%= item.quantity %></div>
                         <div class="order-unit-price">R<%= item.on_sale && item.sale_price ? item.sale_price.toFixed(2) : item.price_excl.toFixed(2) %></div>
-                        <div class="order-returnables-price">R<%= (item.returnable_item_price*item.quantity).toFixed(2) %></div>
+                        <div class="order-returnables-price">
+                          <% if (item.assigned_returnable && !isNaN(item.assigned_returnable.price_excl) && !isNaN(item.quantity)) { %>
+                            R<%= (item.assigned_returnable.price_excl * item.quantity).toFixed(2) %>
+                          <% } else { %>
+                            R0.00
+                          <% } %>                          
+                        </div>
                         <div class="order-total">R<%= item.total_price.toFixed(2) %></div>
                     </div>
                 <% }) %>

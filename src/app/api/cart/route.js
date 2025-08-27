@@ -3,15 +3,6 @@ import { doc, getDoc, writeBatch } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
 const PRODUCTS_API_URL = "https://pricing.bevgo.co.za/api/getProduct";
-const RETURNABLES_API_URL = "https://pricing.bevgo.co.za/api/getReturnables";
-
-const returnableMappings = {
-  130: ["247", "683", "609", "485"],
-  150: ["537", "117", "617", "687"],
-  110: [],
-  115: ["712", "965"],
-  120: [],
-};
 
 export async function POST(req) {
   try {
@@ -33,8 +24,6 @@ export async function POST(req) {
 
     const batch = writeBatch(db);
 
-    const returnablesResponse = await fetch(RETURNABLES_API_URL);
-    const returnablesData = await returnablesResponse.json();
 
     if (action === "add" || action === "edit") {
       if (quantity === 0) {
@@ -60,26 +49,8 @@ export async function POST(req) {
           const { product } = await response.json();
           product.in_cart = quantity;
 
-          let returnableItem = null;
-          for (const [returnableCode, productCodes] of Object.entries(returnableMappings)) {
-            if (productCodes.includes(unique_code)) {
-              for (const category in returnablesData) {
-                const found = returnablesData[category].find(item => item.code === Number(returnableCode));
-                if (found) {
-                  returnableItem = {
-                    returnable_item_code: found.code,
-                    returnable_item_price_excl_vat: found.price,
-                  };
-                  break;
-                }
-              }
-            }
-          }
 
-          if (returnableItem) {
-            product.returnable_item_code = returnableItem.returnable_item_code;
-            product.returnable_item_price_excl_vat = returnableItem.returnable_item_price_excl_vat;
-          }
+
 
           updatedCart.push(product);
         }
