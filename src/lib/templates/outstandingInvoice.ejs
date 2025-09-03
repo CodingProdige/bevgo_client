@@ -1,0 +1,73 @@
+<%- include("_layout", {
+    subject,
+    body: `
+      <p style="font-size: 18px; font-weight: bold; margin-bottom: 12px;">
+        Friendly Reminder: Outstanding Invoice
+      </p>
+  
+      <p>
+        Hi <strong><%= companyName && companyName.trim() ? companyName : "there" %></strong>,
+      </p>
+  
+      <p>
+        <%= message && message.trim()
+          ? message
+          : "This is a friendly reminder that the following invoice remains outstanding." %>
+      </p>
+  
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 16px 0; border-collapse: collapse;">
+        <tbody>
+          <% if (orderNumber && String(orderNumber).trim()) { %>
+            <tr>
+              <td style="padding: 4px 8px;"><strong>Order Number:</strong></td>
+              <td style="padding: 4px 8px;"><%= orderNumber %></td>
+            </tr>
+          <% } %>
+          <% if (orderTotal !== undefined && orderTotal !== null && orderTotal !== "" ) { %>
+            <tr>
+              <td style="padding: 4px 8px;"><strong>Order Total:</strong></td>
+              <td style="padding: 4px 8px;">R<%= Number(orderTotal).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) %></td>
+            </tr>
+          <% } %>
+          <tr>
+            <td style="padding: 4px 8px;"><strong>Invoice Number:</strong></td>
+            <td style="padding: 4px 8px;"><%= invoiceNumber %></td>
+          </tr>
+          <% if (invoiceDate && String(invoiceDate).trim()) { %>
+            <tr>
+              <td style="padding: 4px 8px;"><strong>Invoice Date:</strong></td>
+              <td style="padding: 4px 8px;"><%= invoiceDate %></td>
+            </tr>
+          <% } %>
+          <tr>
+            <td style="padding: 4px 8px;"><strong>Amount Due:</strong></td>
+            <td style="padding: 4px 8px;">R<%= Number(invoiceTotal).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) %></td>
+          </tr>
+        </tbody>
+      </table>
+  
+      <p style="margin: 16px 0 8px 0;">You can view and pay your invoice here:</p>
+  
+      <% if (invoiceUrl && String(invoiceUrl).trim()) { %>
+        <p style="margin: 0 0 16px 0;">
+          <a href="<%= invoiceUrl %>" target="_blank"
+             style="display:inline-block; padding:12px 18px; text-decoration:none; font-weight:600; border-radius:8px; border:1px solid #111; background:#111; color:#fff;">
+            View / Pay Invoice
+          </a>
+        </p>
+        <p style="font-size: 12px; color: #555; margin-top: 8px;">
+          If the button doesn't work, copy and paste this link into your browser:<br />
+          <span style="word-break: break-all;"><%= invoiceUrl %></span>
+        </p>
+      <% } %>
+  
+      <p style="margin-top: 16px;">
+        If you’ve already made payment, thank you — please disregard this email. Otherwise, we’d appreciate settlement at your earliest convenience.
+      </p>
+  
+      <p style="margin-top: 16px; font-size: 12px; color: #666;">
+        This is an automated message from Bevgo. Please do not reply to this email.
+      </p>
+    `
+  }) %>
+  

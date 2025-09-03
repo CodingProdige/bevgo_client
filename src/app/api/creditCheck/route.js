@@ -45,7 +45,7 @@ export async function POST(req) {
     const qInvoices = query(
       collection(db, "invoices"),
       where("customer.companyCode", "==", companyCode),
-      where("payment_status", "==", "pending")
+      where("payment_status", "==", "Pending")
     );
 
     const snapshot = await getDocs(qInvoices);
