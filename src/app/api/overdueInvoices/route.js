@@ -40,9 +40,8 @@ function formatCurrencyZAR(value) {
 }
 
 /**
- * daysBetween(a, b) = whole-day difference from 'a' to 'b' (b - a)
- * Normalizes both dates to local midnight to avoid time-of-day drift.
- * Returns negative if b is earlier than a (i.e., overdue), zero if same day.
+ * Whole-day difference from 'a' to 'b' (b - a), normalized to local midnight.
+ * Negative => overdue (by |diff| days). 0 => due today. Positive => days until due.
  */
 function daysBetween(a, b) {
   const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -59,7 +58,23 @@ function getOverdueBucket(daysOverdue) {
   return "60+ days";
 }
 
-// ---------- Customer email HTML ----------
+// Guard: only render valid absolute http(s) URLs
+function isSafeHttpUrl(u) {
+  try {
+    const x = new URL(u);
+    return x.protocol === "https:" || x.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function linkCell(u) {
+  return isSafeHttpUrl(u)
+    ? `<a href="${u}" target="_blank" rel="noopener noreferrer">PDF</a>`
+    : "—";
+}
+
+// ---------- Customer email HTML (no emojis) ----------
 
 function buildInvoiceTable(rows) {
   if (!rows || rows.length === 0) return "";
@@ -71,8 +86,7 @@ function buildInvoiceTable(rows) {
         <td style="padding:6px 8px;border:1px solid #eee;">${inv.dueDateStr || "-"}</td>
         <td style="padding:6px 8px;border:1px solid #eee;">${inv.itemCount ?? 0}</td>
         <td style="padding:6px 8px;border:1px solid #eee;">${formatCurrencyZAR(inv.total)}</td>
-        <td style="padding:6px 8px;border:1px solid #eee;"><a href="${inv.invoicePDFURL ||
-        "#"}" target="_blank">PDF</a></td>
+        <td style="padding:6px 8px;border:1px solid #eee;">${linkCell(inv.invoicePDFURL)}</td>
       </tr>`
     )
     .join("");
@@ -123,19 +137,20 @@ function buildCustomerHtmlEmail({ subject, companyCode, overdueBuckets, pendingL
     ${
       hasAnyOverdue
         ? `
-      <h3 style="margin:16px 0 8px;">🔴 Overdue (action required)</h3>
+      <h3 style="margin:16px 0 8px;">Overdue (action required)</h3>
       ${buildOverdueBucketsSection(overdueBuckets)}
       `
-        : `<p style="margin:12px 0;"><strong>No overdue invoices 🎉</strong></p>`
+        : `<p style="margin:12px 0;"><strong>No overdue invoices.</strong></p>`
     }
 
     ${
       hasPending
         ? `
-      <h3 style="margin:16px 0 8px;">🟡 Pending (not yet overdue)</h3>
+      <h3 style="margin:16px 0 8px;">Pending (not yet overdue)</h3>
       ${buildInvoiceTable(
         pendingList.map((p) => ({
           ...p,
+          // Append "due in X days" hint
           dueDateStr: `${p.dueDateStr} (in ${p.daysUntilDue} day${p.daysUntilDue === 1 ? "" : "s"})`,
         }))
       )}
@@ -149,17 +164,16 @@ function buildCustomerHtmlEmail({ subject, companyCode, overdueBuckets, pendingL
     ${
       unsubscribeUrl
         ? `<p style="font-size:12px;margin-top:8px;">
-            <a href="${unsubscribeUrl}" target="_blank">Unsubscribe</a>
+            <a href="${unsubscribeUrl}" target="_blank" rel="noopener noreferrer">Unsubscribe</a>
            </p>`
         : ""
     }
   </div>`;
 }
 
-// ---------- Internal summary HTML ----------
+// ---------- Internal summary HTML (no emojis) ----------
 
 function buildInternalHtmlEmail({ subject, reportDate, perCustomer }) {
-  // Grand totals
   let grandOverdueCount = 0;
   let grandOverdueTotal = 0;
   let grandPendingCount = 0;
@@ -226,8 +240,8 @@ function buildInternalCSV(perCustomer, runDateISO) {
     "run_date_iso",
     "customer_email",
     "company_code",
-    "status",        // Overdue or Pending
-    "aging_bucket",  // 1–7, 8–30, 31–60, 60+ or empty for Pending
+    "status",
+    "aging_bucket",
     "order_number",
     "due_date_iso",
     "due_date_display",
@@ -294,8 +308,17 @@ function buildInternalCSV(perCustomer, runDateISO) {
 export async function GET(req) {
   try {
     const url = new URL(req.url);
+
     const isTest = url.searchParams.get("test") === "true";
-    // testRecipient intentionally ignored for sending
+
+    // Recipient override (selector). Legacy 'testRecipient' supported.
+    const recipient = (url.searchParams.get("recipient") || url.searchParams.get("testRecipient") || "")
+      .trim()
+      .toLowerCase();
+
+    // Internal-only switch (production): send only internal summary, no customer emails.
+    const internalOnly = url.searchParams.get("internal") === "true";
+
     const unsubscribeUrl = "https://client-portal.bevgo.co.za/unsubscribe";
 
     const today = new Date();
@@ -306,13 +329,11 @@ export async function GET(req) {
     const invoicesRef = collection(db, "invoices");
     const snapshot = await getDocs(query(invoicesRef, where("payment_status", "==", "Pending")));
 
-    // Build: { [email]: { companyCode, overdueBuckets, pendingList, overdueFlat, pendingFlat } }
     const customerMap = {};
-
     snapshot.forEach((docSnap) => {
       const data = docSnap.data();
-      const customerEmail = data?.customer?.email;
-      if (!customerEmail) return;
+      const email = (data?.customer?.email || "").trim();
+      if (!email) return;
 
       const isEFT = data?.paymentMethod === "EFT";
       if (!isEFT) return;
@@ -321,9 +342,7 @@ export async function GET(req) {
       const dueDate = dueDateISO ? new Date(dueDateISO) : null;
       if (!dueDate || Number.isNaN(dueDate.valueOf())) return;
 
-      // Decide status using day-level diff:
-      // diff < 0 => overdue by -diff days; diff = 0 => due today (pending); diff > 0 => pending
-      const diffDays = daysBetween(today, dueDate);
+      const diffDays = daysBetween(today, dueDate); // <0 overdue; 0 today; >0 pending
 
       const companyCode = data?.customer?.companyCode || "";
       const total =
@@ -341,8 +360,8 @@ export async function GET(req) {
         itemCount: data.orderDetails?.totalItems ?? 0,
       };
 
-      if (!customerMap[customerEmail]) {
-        customerMap[customerEmail] = {
+      if (!customerMap[email]) {
+        customerMap[email] = {
           companyCode,
           overdueBuckets: { "1–7 days": [], "8–30 days": [], "31–60 days": [], "60+ days": [] },
           pendingList: [],
@@ -355,19 +374,20 @@ export async function GET(req) {
         const daysOverdue = Math.abs(diffDays); // >= 1
         const bucket = getOverdueBucket(daysOverdue) || "1–7 days";
         const inv = { ...baseInv, daysOverdue, agingBucket: bucket };
-        customerMap[customerEmail].overdueBuckets[bucket].push(inv);
-        customerMap[customerEmail].overdueFlat.push(inv);
+        customerMap[email].overdueBuckets[bucket].push(inv);
+        customerMap[email].overdueFlat.push(inv);
       } else {
         // diffDays >= 0 => pending (0 = due today)
         const inv = { ...baseInv, daysUntilDue: diffDays };
-        customerMap[customerEmail].pendingList.push(inv);
-        customerMap[customerEmail].pendingFlat.push(inv);
+        customerMap[email].pendingList.push(inv);
+        customerMap[email].pendingFlat.push(inv);
       }
     });
 
-    // Convert to entries
-    const entries = Object.entries(customerMap).map(([email, v]) => ({
+    // 2) Build entries and apply recipient filter if provided
+    let entries = Object.entries(customerMap).map(([email, v]) => ({
       email,
+      emailKey: email.trim().toLowerCase(),
       companyCode: v.companyCode,
       overdueBuckets: v.overdueBuckets,
       overdueFlat: v.overdueFlat,
@@ -375,22 +395,35 @@ export async function GET(req) {
       pendingFlat: v.pendingFlat,
     }));
 
-    // If none found at all:
+    if (recipient) {
+      entries = entries.filter((e) => e.emailKey === recipient);
+    }
+
+    // None found?
     if (entries.length === 0) {
       await addDoc(collection(db, "emailLogs"), {
         type: "invoice_status_notice",
         timestamp: new Date(),
         testMode: isTest,
+        internalOnly,
+        recipientOverride: recipient || null,
         customers: [],
       });
+      const scope = recipient ? `for ${recipient}` : "found";
       await sendSlackMessage(
-        `📢 *${isTest ? "TEST" : "PRODUCTION"} Invoice Status Report:* 0 customer(s) found.`
+        `📢 *${isTest ? "TEST" : "PRODUCTION"} Invoice Status Report:* 0 customer(s) ${scope}${
+          internalOnly ? " (internal-only)" : ""
+        }.`
       );
       return NextResponse.json({
-        message: "No EFT Pending invoices found.",
+        message: recipient
+          ? `No matching customer with EFT Pending invoices for recipient: ${recipient}`
+          : "No EFT Pending invoices found.",
         customersNotified: 0,
         customers: [],
         testMode: isTest,
+        recipient: recipient || null,
+        internalOnly,
       });
     }
 
@@ -400,53 +433,64 @@ export async function GET(req) {
     const emailLogs = [];
     const customersEmailed = [];
 
-    // 2) Customer sends (skip in test mode)
-    for (const entry of entries) {
-      const hasAny =
-        (entry.overdueFlat?.length || 0) + (entry.pendingFlat?.length || 0) > 0;
-      if (!hasAny) continue;
+    // 3) Customer sends
+    // - Never in test mode
+    // - Skip entirely if internalOnly=true
+    if (!isTest && !internalOnly) {
+      for (const entry of entries) {
+        const hasAny =
+          (entry.overdueFlat?.length || 0) + (entry.pendingFlat?.length || 0) > 0;
+        if (!hasAny) continue;
 
-      const htmlBody = buildCustomerHtmlEmail({
-        subject,
-        companyCode: entry.companyCode,
-        overdueBuckets: entry.overdueBuckets,
-        pendingList: entry.pendingList,
-        unsubscribeUrl,
-      });
+        const htmlBody = buildCustomerHtmlEmail({
+          subject,
+          companyCode: entry.companyCode,
+          overdueBuckets: entry.overdueBuckets,
+          pendingList: entry.pendingList,
+          unsubscribeUrl,
+        });
 
-      const msg = {
-        to: normalizeRecipients(entry.email),
-        from: "no-reply@bevgo.co.za",
-        subject,
-        html: htmlBody,
-        text: toPlainText(htmlBody),
-        headers: {
-          "List-Unsubscribe": `<${unsubscribeUrl}>`,
-          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        },
-      };
+        const msg = {
+          to: normalizeRecipients(entry.email),
+          from: "no-reply@bevgo.co.za",
+          subject,
+          html: htmlBody,
+          text: toPlainText(htmlBody),
+          headers: {
+            "List-Unsubscribe": `<${unsubscribeUrl}>`,
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+          },
+          trackingSettings: {
+            clickTracking: { enable: false, enableText: false }, // disable link wrapping
+            openTracking: { enable: true },
+          },
+        };
 
-      if (!isTest) {
         try {
           await sgMail.send(msg);
           customersEmailed.push(entry.email);
         } catch (err) {
-          console.error(`❌ SendGrid failed for ${entry.email}:`, err?.response?.body || err.message);
+          console.error(`SendGrid failed for ${entry.email}:`, err?.response?.body || err.message);
         }
-      } else {
-        console.log(`🧪 Test mode — would have sent to ${entry.email}`);
       }
+    } else if (isTest) {
+      entries.forEach((e) => console.log(`Test mode — would have sent to ${e.email}`));
+    } // else internalOnly=true → intentionally skip customer sends
 
+    // Regardless of send mode, prepare logs for internal use
+    entries.forEach((entry) => {
       emailLogs.push({
         email: entry.email,
         companyCode: entry.companyCode,
         overdue: entry.overdueFlat,
         pending: entry.pendingFlat,
-        sent: !isTest,
+        sent: !isTest && !internalOnly && customersEmailed.includes(entry.email),
       });
-    }
+    });
 
-    // 3) Internal summary (PRODUCTION only) + CSV attachment (every invoice row)
+    // 4) Internal summary
+    // - In production: always send internal summary (including when internalOnly=true)
+    // - In test: never send
     if (!isTest) {
       const internalHtml = buildInternalHtmlEmail({
         subject: internalSubject,
@@ -458,54 +502,68 @@ export async function GET(req) {
       const internalMsg = {
         to: ["info@bevgo.co.za"],
         from: "no-reply@bevgo.co.za",
-        subject: internalSubject,
+        subject:
+          internalSubject +
+          (recipient ? ` (scope: ${recipient})` : "") +
+          (internalOnly ? " [INTERNAL-ONLY]" : ""),
         html: internalHtml,
         text: toPlainText(internalHtml),
         attachments: [
           {
             content: Buffer.from(csv, "utf8").toString("base64"),
-            filename: `overdue_pending_${todayISO.substring(0, 10)}.csv`,
+            filename: `overdue_pending_${todayISO.substring(0, 10)}${
+              recipient ? `_${recipient.replace(/[^a-z0-9@.-]/gi, "_")}` : ""
+            }.csv`,
             type: "text/csv",
             disposition: "attachment",
           },
         ],
+        trackingSettings: {
+          clickTracking: { enable: false, enableText: false }, // disable link wrapping
+          openTracking: { enable: true },
+        },
       };
-
       try {
         await sgMail.send(internalMsg);
       } catch (err) {
-        console.error("❌ SendGrid failed for internal summary:", err?.response?.body || err.message);
+        console.error("SendGrid failed for internal summary:", err?.response?.body || err.message);
       }
     } else {
-      console.log("🧪 Test mode — would have sent internal summary to info@bevgo.co.za");
+      console.log("Test mode — would have sent internal summary to info@bevgo.co.za");
     }
 
-    // 4) Firestore log + Slack
+    // 5) Firestore log + Slack
     await addDoc(collection(db, "emailLogs"), {
       type: "invoice_status_notice",
       timestamp: new Date(),
       testMode: isTest,
+      internalOnly,
+      recipientOverride: recipient || null,
       customers: emailLogs,
     });
 
     await sendSlackMessage(
-      `📢 *${
-        isTest ? "TEST" : "PRODUCTION"
-      } Invoice Status Report:* ${customersEmailed.length} customer(s) emailed.\n${customersEmailed
-        .map((e) => `• ${e}`)
-        .join("\n")}`
+      `📢 *${isTest ? "TEST" : "PRODUCTION"} Invoice Status Report:* ${
+        customersEmailed.length
+      } customer(s) emailed${recipient ? ` (scope: ${recipient})` : ""}${
+        internalOnly ? " (internal-only)" : ""
+      }.\n${customersEmailed.map((e) => `• ${e}`).join("\n")}`
     );
 
     return NextResponse.json({
       message: isTest
-        ? "🧪 Test mode: scanned invoices and logged results (no emails sent)."
-        : "✅ Production: customer notices sent; internal summary delivered.",
+        ? "Test mode: scanned invoices and logged results (no emails sent)."
+        : internalOnly
+        ? "Production: internal summary only (no customer emails)."
+        : "Production: customer notices sent; internal summary delivered.",
       customersNotified: customersEmailed.length,
       customers: customersEmailed,
       testMode: isTest,
+      recipient: recipient || null,
+      internalOnly,
     });
   } catch (error) {
-    console.error("❌ Cronjob Error:", error);
+    console.error("Cronjob Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
