@@ -93,6 +93,14 @@ const mapWithConcurrency = async (items, limit, fn) => {
   return out;
 };
 
+// Safe, timestamped filenames (prevents slashes/illegal chars)
+function buildUniqueFileName(baseName = 'bevgo-stock-reorder') {
+  // Replace illegal filename chars just in case a custom baseName is sent
+  const safeBase = String(baseName).replace(/[\/\\:*?"<>|]+/g, '-').trim() || 'bevgo-stock-reorder';
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-'); // e.g. 2025-09-05T08-41-22-123Z
+  return `${safeBase}-${timestamp}.pdf`;
+}
+
 // -------------------- Core calls --------------------
 async function getForecast({ days, mood, countryCode, companyCode, compare }) {
   const r = await fetch(PREDICTION_URL, {
@@ -152,7 +160,7 @@ export async function POST(req) {
 
       // PDF controls
       pdf = false,                  // if true, generate PDF via Cloud Run
-      fileName,                     // optional file name for PDF
+      fileName,                     // optional base name for PDF (timestamp appended regardless)
     } = body || {};
 
     // 1) Forecast (per productCode)
@@ -287,12 +295,15 @@ export async function POST(req) {
         leadTimes: vendorLeadTimes || DEFAULT_VENDOR_LEAD_TIMES,
       });
 
+      // Build a safe, timestamped filename (even if client passed fileName)
+      const uniqueFileName = buildUniqueFileName(fileName || 'bevgo-stock-reorder');
+
       const resp = await fetch(PDF_FUNCTION_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           htmlContent: html,
-          fileName: fileName || `bevgo-stock-reorder-${Date.now()}`,
+          fileName: uniqueFileName,
         }),
       });
 
