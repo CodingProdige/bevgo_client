@@ -104,7 +104,7 @@ export async function POST(req) {
             },
           }
         : {}),
-      unsubscribeUrl, // non-standard; kept for backward compatibility with your templates
+      unsubscribeUrl, // non-standard; kept for backward compatibility with your templates   
     };
 
     await sgMail.send(msg);

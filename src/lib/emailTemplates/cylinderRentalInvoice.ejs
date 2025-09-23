@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+    background-image: url("https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Watermark.png?alt=media&token=d8209c3c-1cee-4555-aad7-b21441de9721");
+    background-repeat: repeat;
+    background-size: 100% auto;
+    background-position: center;
+          
+        }
+      
+        p {
+            margin: 0;
+        }
+        h3 {
+            margin: 0 0 0.5rem 0;
+            font-size: 1rem;
+        }
+
+        .page {
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            height: 100%;
+            padding: 20px;
+            box-sizing: border-box;
+            gap: 1rem;
+          background: transparent;
+        }
+
+        .footer {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #777;
+        }
+
+        .header {
+            display: flex;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            justify-content: space-around;
+            gap: 1rem;
+            width: 100%;
+            align-items: stretch;
+        }
+        .bevgo-details {
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: flex-start;
+            border: 1px solid black;
+            padding: 0.5rem;
+            width: 100%;
+        }
+        .details-container {
+            display: flex;
+            flex-direction: row;
+            justify-content: flex-start;
+            align-items: flex-start;
+            gap: 2rem;
+        }
+        .details-address, .details-contact {
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: flex-start;
+            flex: 1
+        }
+        .bevgo-logo {
+            width: 250px;
+            height: auto;
+            object-fit: contain;
+        }
+        .invoice-number-section {
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: flex-start;
+            padding: 0.5rem;
+            border: 1px solid black;
+            width: 100%;
+        }
+
+        .customer-details {
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: flex-start;
+            padding: 0.5rem;
+            border: 1px solid black;
+        }
+
+        /* Columned list styling */
+        .item-list {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            margin: 10px 0;
+        }
+      .order-items, .return-items {
+        display: flex;
+        flex-direction: column;
+        border: 1px solid black;
+        padding: 0.5rem 0.5rem 2rem 0.5rem;
+      }
+      .order-items {
+        flex-grow:1
+      }
+
+        .item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px;
+            gap: 0.5rem;
+        }
+
+        .item-heading {
+            font-weight: bold;
+            border: 1px solid black;
+            margin-bottom: 5px;
+          font-size: 12px;
+        }
+      
+      .heading-quantity,
+      .heading-unit-price, 
+      .heading-return-type {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-right: 1px solid black;
+        flex: 1.5;
+        text-align: center;
+        height: 100%;
+      }
+      
+      .heading-total {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 1.5;
+        text-align: center;
+        height: 100%;
+      }
+      .heading-product-image {
+        width: 32px;
+      }
+
+      .heading-product-title {
+        display: flex;
+        align-items: center;
+        border-right: 1px solid black;
+        flex: 3;
+        text-align: left;
+        height: 100%;
+      }
+      
+        .order-product-title,
+        .return-product-title{
+            flex: 3;
+            text-align: left;
+            height: 100%;
+        }
+      
+        .order-quantity,
+        .order-unit-price,
+        .order-total,
+        .return-return-type,
+        .return-quantity,
+        .return-unit-price,
+        .return-total {
+            flex: 1.5;
+            text-align: center;
+            height: 100%;
+        }
+      .order-product-image img {
+        width: 32px;
+        height: 32px;
+      }
+  
+
+      .totals-container {
+        display: flex;
+        flex-direction: row;
+        justify-content: flex-start;
+        align-items: flex-start;
+        gap: 1rem;
+        align-items: stretch;
+      }
+      .bank-details {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        align-items: flex-start;
+        padding: 0.5rem;
+        border: 1px solid black;
+        width: 100%;
+      }
+      .totals {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        align-items: flex-start;
+        padding: 0.5rem;
+        border: 1px solid black;
+        width: 100%;
+        gap:0.2rem;
+      }
+      .final-total {
+        width: 100%;
+        border-top: 1px solid black;
+      }
+      .breakdown-row {
+        display: flex;
+        flex-direction: row;
+        justify-content: space-between;
+        width: 100%;
+      }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <!-- Header -->
+        <div class="header">
+            <div class="bevgo-details">
+                <img class="bevgo-logo" src="https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Header%20Banner.png?alt=media&token=fb6ef880-b618-46c5-a1c3-e9bc1dd3690e" alt="Company Logo">
+                <div class="details-container">
+                    <div class="details-address">
+                        <p><%= companyAddress %></p>
+                    </div>
+                    <div class="details-contact">
+                        <p><%= companyContact %></p>
+                        <p><%= companyEmail %></p>
+                        <p>VAT No: <%= companyVAT %></p>
+                    </div>
+                </div>
+            </div>
+            <div class="invoice-number-section">
+                <h3>Tax Invoice:</h3>
+                <p>Invoice Number: <%= invoiceNumber %></p>
+                <p>Invoiced Date: <%= invoiceDate %></p>
+                <p>Payment Method: <%= paymentMethod || "EFT" %></p>
+                <p>Payment Due: <%= dueDate %></p>
+            </div>
+        </div>
+
+        <!-- Customer Details -->
+        <div class="customer-details">
+            <h3>Deliver To:</h3>
+            <p><%= customer.name %></p>
+            <p><%= customer.address %></p>
+            <p><%= customer.contact %></p>
+            <p><%= customer.email %></p>
+            <p>VAT No: <%= customer.vat %></p>
+        </div>
+
+<!-- Cylinder Rentals -->
+<div class="order-items">
+    <h3>Cylinder Rentals (Monthly)</h3>
+    <div class="item item-heading">
+      <div class="heading-product-title">Product</div>
+      <div class="heading-return-type">Serial</div>
+      <div class="heading-quantity">Qty</div>
+      <div class="heading-unit-price">Unit Rental (Excl. VAT)</div>
+      <div class="heading-total">Total</div>
+    </div>
+    <div class="order-item-list">
+      <% cylinders.forEach(cyl => { %>
+        <div class="item">
+          <div class="order-product-title"><%= cyl.product %></div>
+          <div class="return-return-type"><%= cyl.serial %></div>
+          <div class="order-quantity">1</div>
+          <div class="order-unit-price">R<%= cyl.rental_fee.toFixed(2) %></div>
+          <div class="order-total">R<%= (cyl.rental_fee * cyl.quantity).toFixed(2) %></div>
+        </div>
+      <% }) %>
+    </div>
+  </div>
+  
+        
+          
+
+        <!-- Totals -->
+        <div class="totals-container">
+            <div class="bank-details">
+              <h3>Bank Details:</h3>
+              <p>Account holder: BEVGO (PTY) Ltd</p>
+              <p>Bank: Nedbank</p>
+              <p>Account number: 1318880823</p>
+              <p>Account type: Current account</p>
+              <p>Branch code: 198765</p>
+            </div>
+            <div class="totals">
+              <h3>Breakdown:</h3>
+              <div class="breakdown-row">
+                <p>Subtotal (VAT Excl.):</p>
+                <p>R<%= totals.excl %></p>
+              </div>
+              <div class="breakdown-row">
+                <p>VAT (15%):</p>
+                <p>R<%= totals.vat %></p>
+              </div>
+              <div class="final-total"></div>
+              <div class="breakdown-row">
+                <p><strong>Total:</strong></p>
+                <p><strong>R<%= totals.incl %></strong></p>
+              </div>
+            </div>
+          </div>
+    </div>
+</body>
+</html>

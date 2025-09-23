@@ -1,0 +1,11 @@
+<%- include("_layout", {
+    subject,
+    body: `
+      <p>Hi <strong><%= companyName %></strong>,</p>
+  
+      <p>We regret to inform you that your payment attempt for invoice <strong>#<%= invoiceNumber %></strong> has <span style="color:red;">FAILED</span>.</p>
+  
+      <p>Please retry via your invoice link or contact us at <a href="mailto:info@bevgo.co.za">info@bevgo.co.za</a>.</p>
+    `
+  }) %>
+  

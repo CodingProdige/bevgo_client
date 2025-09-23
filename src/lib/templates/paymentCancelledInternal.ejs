@@ -1,0 +1,14 @@
+<%- include("_layout", {
+    subject,
+    body: `
+      <p><strong>Payment Cancelled</strong></p>
+  
+      <p>Invoice <strong>#<%= invoiceNumber %></strong> payment attempt was cancelled by the customer.</p>
+  
+      <p><strong>Customer:</strong> <%= companyName %><br/>
+         <strong>Amount Intended:</strong> R<%= amountPaid %></p>
+  
+      <p>No update was made to the payment status in Firestore.</p>
+    `
+  }) %>
+  

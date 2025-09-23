@@ -2,7 +2,16 @@
 
 // Firestore
 import { db } from "@/lib/firebaseConfig";
-import { collection, getDocs, query, where, addDoc } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  addDoc,
+  limit,
+  updateDoc,
+  serverTimestamp,
+} from "firebase/firestore";
 
 // Slack
 import { sendSlackMessage } from "@/lib/slackService";
@@ -14,7 +23,18 @@ import { NextResponse } from "next/server";
 import sgMail from "@sendgrid/mail";
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// -------------------- Utilities --------------------
+/* -------------------- Constants -------------------- */
+
+const EMAIL_FIELDS = [
+  "email",
+  "accountingEmail",
+  "billingEmail",
+  "accountsEmail",
+  "primaryEmail",
+  "contactEmail",
+];
+
+/* -------------------- Utilities -------------------- */
 
 function normalizeRecipients(input) {
   if (!input) return undefined;
@@ -50,15 +70,44 @@ function daysBetween(a, b) {
   return Math.round((end - start) / MS_PER_DAY);
 }
 
-function getOverdueBucket(daysOverdue) {
-  // expects integer >= 1
-  if (daysOverdue <= 7) return "1–7 days";
-  if (daysOverdue <= 30) return "8–30 days";
-  if (daysOverdue <= 60) return "31–60 days";
-  return "60+ days";
+/** Robust date parser for ISO and ZA-style D/M/Y or M/D/Y */
+function parseDueDateFlexible(input) {
+  if (!input) return null;
+
+  // ISO fast path
+  if (/^\d{4}-\d{2}-\d{2}(?:T|$)/.test(input)) {
+    const d = new Date(input);
+    return Number.isNaN(d.valueOf()) ? null : d;
+  }
+
+  // D/M/Y or M/D/Y (1–2 digit day/month)
+  const m = String(input).match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) {
+    const a = parseInt(m[1], 10);
+    const b = parseInt(m[2], 10);
+    const y = parseInt(m[3], 10);
+    let day, month;
+    if (a > 12) {
+      day = a;
+      month = b;
+    } else if (b > 12) {
+      day = b;
+      month = a;
+    } else {
+      // Default to ZA-style D/M/Y
+      day = a;
+      month = b;
+    }
+    const d = new Date(y, month - 1, day);
+    return Number.isNaN(d.valueOf()) ? null : d;
+  }
+
+  // Fallback
+  const d = new Date(input);
+  return Number.isNaN(d.valueOf()) ? null : d;
 }
 
-// Guard: only render valid absolute http(s) URLs
+// Only render valid absolute http(s) URLs
 function isSafeHttpUrl(u) {
   try {
     const x = new URL(u);
@@ -74,7 +123,7 @@ function linkCell(u) {
     : "—";
 }
 
-// ---------- Customer email HTML (no emojis) ----------
+/* ---------- Customer email HTML (no emojis) ---------- */
 
 function buildInvoiceTable(rows) {
   if (!rows || rows.length === 0) return "";
@@ -150,8 +199,7 @@ function buildCustomerHtmlEmail({ subject, companyCode, overdueBuckets, pendingL
       ${buildInvoiceTable(
         pendingList.map((p) => ({
           ...p,
-          // Append "due in X days" hint
-          dueDateStr: `${p.dueDateStr} (in ${p.daysUntilDue} day${p.daysUntilDue === 1 ? "" : "s"})`,
+          dueDateStr: `${p.dueDateStr} (in ${p.dueDateStrNote ?? p.daysUntilDue} day${p.daysUntilDue === 1 ? "" : "s"})`,
         }))
       )}
       `
@@ -171,7 +219,7 @@ function buildCustomerHtmlEmail({ subject, companyCode, overdueBuckets, pendingL
   </div>`;
 }
 
-// ---------- Internal summary HTML (no emojis) ----------
+/* ---------- Internal summary HTML (no emojis) ---------- */
 
 function buildInternalHtmlEmail({ subject, reportDate, perCustomer }) {
   let grandOverdueCount = 0;
@@ -233,7 +281,7 @@ function buildInternalHtmlEmail({ subject, reportDate, perCustomer }) {
   `;
 }
 
-// ---------- CSV (row per invoice) ----------
+/* ---------- CSV (row per invoice) ---------- */
 
 function buildInternalCSV(perCustomer, runDateISO) {
   const header = [
@@ -303,7 +351,120 @@ function buildInternalCSV(perCustomer, runDateISO) {
   return `${header}\n${csvBody}`;
 }
 
-// -------------------- Handler --------------------
+/* -------------------- Email lookups (STRICT casing; no lowercasing) -------------------- */
+
+const companyPrimaryEmailCache = new Map(); // first valid email we find
+const companyAllEmailsCache = new Map();     // set of all possible emails
+const emailToCompanyCodesCache = new Map();  // email -> Set(companyCode)
+
+/** Return FIRST valid email for a companyCode (used for backfill). */
+async function lookupEmailByCompanyCode(companyCode) {
+  if (!companyCode) return null;
+  const key = String(companyCode).trim();
+  if (!key) return null;
+
+  if (companyPrimaryEmailCache.has(key)) {
+    return companyPrimaryEmailCache.get(key);
+  }
+
+  const collectionsToCheck = ["users", "customers"];
+
+  for (const colName of collectionsToCheck) {
+    try {
+      const ref = collection(db, colName);
+      const snap = await getDocs(query(ref, where("companyCode", "==", key), limit(5)));
+      if (!snap.empty) {
+        for (const d of snap.docs) {
+          const data = d.data() || {};
+          for (const f of EMAIL_FIELDS) {
+            const v = (data?.[f] || "").trim();
+            if (v && v.includes("@")) {
+              companyPrimaryEmailCache.set(key, v);
+              return v;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`lookupEmailByCompanyCode(${key}) ${colName} error:`, e?.message || e);
+    }
+  }
+
+  companyPrimaryEmailCache.set(key, null);
+  return null;
+}
+
+/** Return ALL candidate emails for a companyCode (used for recipient scoping). */
+async function lookupAllEmailsByCompanyCode(companyCode) {
+  if (!companyCode) return [];
+  const key = String(companyCode).trim();
+  if (!key) return [];
+
+  if (companyAllEmailsCache.has(key)) {
+    return companyAllEmailsCache.get(key);
+  }
+
+  const collectionsToCheck = ["users", "customers"];
+  const out = new Set();
+
+  for (const colName of collectionsToCheck) {
+    try {
+      const ref = collection(db, colName);
+      const snap = await getDocs(query(ref, where("companyCode", "==", key), limit(10)));
+      if (!snap.empty) {
+        for (const d of snap.docs) {
+          const data = d.data() || {};
+          for (const f of EMAIL_FIELDS) {
+            const v = (data?.[f] || "").trim();
+            if (v && v.includes("@")) out.add(v);
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`lookupAllEmailsByCompanyCode(${key}) ${colName} error:`, e?.message || e);
+    }
+  }
+
+  const arr = Array.from(out);
+  companyAllEmailsCache.set(key, arr);
+  return arr;
+}
+
+/** Given an exact email, find ALL companyCodes that have that email in any known field. */
+async function lookupCompanyCodesByEmail(email) {
+  if (!email) return [];
+  const key = String(email).trim();
+  if (!key) return [];
+
+  if (emailToCompanyCodesCache.has(key)) {
+    return Array.from(emailToCompanyCodesCache.get(key));
+  }
+
+  const collectionsToCheck = ["users", "customers"];
+  const codes = new Set();
+
+  for (const colName of collectionsToCheck) {
+    for (const field of EMAIL_FIELDS) {
+      try {
+        const ref = collection(db, colName);
+        const snap = await getDocs(query(ref, where(field, "==", key), limit(10)));
+        snap.forEach((doc) => {
+          const data = doc.data() || {};
+          const cc = (data?.companyCode || "").trim();
+          if (cc) codes.add(cc);
+        });
+      } catch (e) {
+        // If a field doesn't exist or no index, just skip
+        // (consider creating necessary composite indexes in production)
+      }
+    }
+  }
+
+  emailToCompanyCodesCache.set(key, codes);
+  return Array.from(codes);
+}
+
+/* -------------------- Handler -------------------- */
 
 export async function GET(req) {
   try {
@@ -312,9 +473,7 @@ export async function GET(req) {
     const isTest = url.searchParams.get("test") === "true";
 
     // Recipient override (selector). Legacy 'testRecipient' supported.
-    const recipient = (url.searchParams.get("recipient") || url.searchParams.get("testRecipient") || "")
-      .trim()
-      .toLowerCase();
+    const recipientRaw = (url.searchParams.get("recipient") || url.searchParams.get("testRecipient") || "").trim();
 
     // Internal-only switch (production): send only internal summary, no customer emails.
     const internalOnly = url.searchParams.get("internal") === "true";
@@ -329,39 +488,74 @@ export async function GET(req) {
     const invoicesRef = collection(db, "invoices");
     const snapshot = await getDocs(query(invoicesRef, where("payment_status", "==", "Pending")));
 
-    const customerMap = {};
-    snapshot.forEach((docSnap) => {
+    const customerMap = {}; // key by EXACT email (no lowercasing)
+
+    // Use for..of to allow await for backfill/lookup
+    for (const docSnap of snapshot.docs) {
       const data = docSnap.data();
-      const email = (data?.customer?.email || "").trim();
-      if (!email) return;
+
+      const companyCode = data?.customer?.companyCode || data?.companyCode || "";
+
+      // Resolve recipient email: invoice customer.email OR lookup by companyCode
+      let emailRaw = (data?.customer?.email || "").trim();
+      const hadBlankEmail = !emailRaw;
+
+      if (!emailRaw && companyCode) {
+        emailRaw = (await lookupEmailByCompanyCode(companyCode)) || "";
+      }
+      if (!emailRaw) {
+        // still no email anywhere → skip emailing this invoice
+        continue;
+      }
+
+      // Always backfill when original invoice was missing an email (STRICT: keep casing as-is)
+      if (hadBlankEmail) {
+        try {
+          await updateDoc(docSnap.ref, {
+            "customer.email": emailRaw,
+            "meta.emailBackfill": {
+              at: serverTimestamp(),
+              source: "overdueInvoices:companyCodeLookup",
+              companyCode: companyCode || null,
+            },
+          });
+        } catch (e) {
+          console.error(
+            `Backfill failed for invoice ${data?.orderNumber || docSnap.id}:`,
+            e?.message || e
+          );
+          // non-fatal; continue processing
+        }
+      }
 
       const isEFT = data?.paymentMethod === "EFT";
-      if (!isEFT) return;
+      if (!isEFT) continue;
 
-      const dueDateISO = data?.dueDate;
-      const dueDate = dueDateISO ? new Date(dueDateISO) : null;
-      if (!dueDate || Number.isNaN(dueDate.valueOf())) return;
+      const dueDateRaw = data?.dueDate;
+      const dueDate = parseDueDateFlexible(dueDateRaw);
+      if (!dueDate) continue;
 
       const diffDays = daysBetween(today, dueDate); // <0 overdue; 0 today; >0 pending
 
-      const companyCode = data?.customer?.companyCode || "";
       const total =
-        data.finalTotals?.finalTotal ??
-        data.finalTotals?.subtotalAfterRebate ??
-        data.orderDetails?.total ??
+        data?.finalTotals?.finalTotal ??
+        data?.finalTotals?.subtotalAfterRebate ??
+        data?.orderDetails?.total ??
+        data?.total ??
         0;
 
       const baseInv = {
-        orderNumber: data.orderNumber,
-        dueDateISO,
+        orderNumber: data?.orderNumber,
+        dueDateISO: dueDateRaw,
         dueDateStr: dueDate.toLocaleDateString("en-ZA"),
-        invoicePDFURL: data.invoicePDFURL,
+        invoicePDFURL: data?.invoicePDFURL,
         total: Number(total || 0),
-        itemCount: data.orderDetails?.totalItems ?? 0,
+        itemCount: data?.orderDetails?.totalItems ?? data?.totalItems ?? 0,
       };
 
-      if (!customerMap[email]) {
-        customerMap[email] = {
+      if (!customerMap[emailRaw]) {
+        customerMap[emailRaw] = {
+          email: emailRaw, // exact casing
           companyCode,
           overdueBuckets: { "1–7 days": [], "8–30 days": [], "31–60 days": [], "60+ days": [] },
           pendingList: [],
@@ -371,60 +565,57 @@ export async function GET(req) {
       }
 
       if (diffDays < 0) {
-        const daysOverdue = Math.abs(diffDays); // >= 1
-        const bucket = getOverdueBucket(daysOverdue) || "1–7 days";
+        const daysOverdue = Math.abs(diffDays);
+        const bucket =
+          daysOverdue <= 7 ? "1–7 days" : daysOverdue <= 30 ? "8–30 days" : daysOverdue <= 60 ? "31–60 days" : "60+ days";
         const inv = { ...baseInv, daysOverdue, agingBucket: bucket };
-        customerMap[email].overdueBuckets[bucket].push(inv);
-        customerMap[email].overdueFlat.push(inv);
+        customerMap[emailRaw].overdueBuckets[bucket].push(inv);
+        customerMap[emailRaw].overdueFlat.push(inv);
       } else {
-        // diffDays >= 0 => pending (0 = due today)
         const inv = { ...baseInv, daysUntilDue: diffDays };
-        customerMap[email].pendingList.push(inv);
-        customerMap[email].pendingFlat.push(inv);
+        customerMap[emailRaw].pendingList.push(inv);
+        customerMap[emailRaw].pendingFlat.push(inv);
       }
-    });
-
-    // 2) Build entries and apply recipient filter if provided
-    let entries = Object.entries(customerMap).map(([email, v]) => ({
-      email,
-      emailKey: email.trim().toLowerCase(),
-      companyCode: v.companyCode,
-      overdueBuckets: v.overdueBuckets,
-      overdueFlat: v.overdueFlat,
-      pendingList: v.pendingList,
-      pendingFlat: v.pendingFlat,
-    }));
-
-    if (recipient) {
-      entries = entries.filter((e) => e.emailKey === recipient);
     }
 
-    // None found?
-    if (entries.length === 0) {
-      await addDoc(collection(db, "emailLogs"), {
-        type: "invoice_status_notice",
-        timestamp: new Date(),
-        testMode: isTest,
-        internalOnly,
-        recipientOverride: recipient || null,
-        customers: [],
-      });
-      const scope = recipient ? `for ${recipient}` : "found";
-      await sendSlackMessage(
-        `📢 *${isTest ? "TEST" : "PRODUCTION"} Invoice Status Report:* 0 customer(s) ${scope}${
-          internalOnly ? " (internal-only)" : ""
-        }.`
+    // 2) Build entries (no case normalization)
+    let entries = Object.values(customerMap);
+
+    /* 2b) Build symmetric recipient scope: whether you pass EMAIL or COMPANYCODE, we check BOTH. */
+    if (recipientRaw) {
+      const allowedEmails = new Set();
+      const allowedCodes = new Set();
+
+      const looksLikeEmail = recipientRaw.includes("@");
+
+      if (looksLikeEmail) {
+        // Given an email → allow that email…
+        allowedEmails.add(recipientRaw);
+
+        // …and ALSO all companyCodes that have that exact email, then all emails for those codes.
+        const codesForEmail = await lookupCompanyCodesByEmail(recipientRaw);
+        codesForEmail.forEach((cc) => allowedCodes.add(cc));
+        for (const cc of codesForEmail) {
+          const emailsForCode = await lookupAllEmailsByCompanyCode(cc);
+          emailsForCode.forEach((e) => allowedEmails.add(e));
+        }
+      } else {
+        // Given a companyCode → allow that code…
+        allowedCodes.add(recipientRaw);
+
+        // …and ALSO all emails tied to that code, and then for each of those emails, any other codes that reference them.
+        const emailsForCode = await lookupAllEmailsByCompanyCode(recipientRaw);
+        emailsForCode.forEach((e) => allowedEmails.add(e));
+        for (const em of emailsForCode) {
+          const codesForEmail = await lookupCompanyCodesByEmail(em);
+          codesForEmail.forEach((cc) => allowedCodes.add(cc));
+        }
+      }
+
+      // Final symmetric filter: keep if (companyCode in allowedCodes) OR (email in allowedEmails)
+      entries = entries.filter(
+        (e) => allowedCodes.has((e.companyCode || "").trim()) || allowedEmails.has((e.email || "").trim())
       );
-      return NextResponse.json({
-        message: recipient
-          ? `No matching customer with EFT Pending invoices for recipient: ${recipient}`
-          : "No EFT Pending invoices found.",
-        customersNotified: 0,
-        customers: [],
-        testMode: isTest,
-        recipient: recipient || null,
-        internalOnly,
-      });
     }
 
     const subject = `Invoice Notice — Overdue & Pending — ${todayReadable}`;
@@ -475,7 +666,7 @@ export async function GET(req) {
       }
     } else if (isTest) {
       entries.forEach((e) => console.log(`Test mode — would have sent to ${e.email}`));
-    } // else internalOnly=true → intentionally skip customer sends
+    }
 
     // Regardless of send mode, prepare logs for internal use
     entries.forEach((entry) => {
@@ -488,38 +679,43 @@ export async function GET(req) {
       });
     });
 
-    // 4) Internal summary
-    // - In production: always send internal summary (including when internalOnly=true)
-    // - In test: never send
+    /* 4) Internal summary — ALWAYS in production (even if no entries) */
     if (!isTest) {
+      const noMatches = entries.length === 0;
       const internalHtml = buildInternalHtmlEmail({
-        subject: internalSubject,
+        subject:
+          internalSubject +
+          (recipientRaw ? ` (scope: ${recipientRaw})` : "") +
+          (internalOnly ? " [INTERNAL-ONLY]" : "") +
+          (noMatches ? " [NO MATCHES]" : ""),
         reportDate: todayReadable,
-        perCustomer: emailLogs,
+        perCustomer: emailLogs, // may be empty
       });
 
-      const csv = buildInternalCSV(emailLogs, todayISO);
+      const csv = buildInternalCSV(emailLogs, todayISO); // header-only when empty
       const internalMsg = {
         to: ["info@bevgo.co.za"],
         from: "no-reply@bevgo.co.za",
         subject:
           internalSubject +
-          (recipient ? ` (scope: ${recipient})` : "") +
-          (internalOnly ? " [INTERNAL-ONLY]" : ""),
+          (recipientRaw ? ` (scope: ${recipientRaw})` : "") +
+          (internalOnly ? " [INTERNAL-ONLY]" : "") +
+          (noMatches ? " [NO MATCHES]" : ""),
         html: internalHtml,
         text: toPlainText(internalHtml),
         attachments: [
           {
             content: Buffer.from(csv, "utf8").toString("base64"),
             filename: `overdue_pending_${todayISO.substring(0, 10)}${
-              recipient ? `_${recipient.replace(/[^a-z0-9@.-]/gi, "_")}` : ""
-            }.csv`,
+              recipientRaw ? `_${recipientRaw.replace(/[^a-zA-Z0-9@.\-]/g, "_")}` : ""
+            }${noMatches ? "__no_matches" : ""}.csv`,
             type: "text/csv",
             disposition: "attachment",
           },
         ],
+        headers: { "X-Overdue-Run": todayISO },
         trackingSettings: {
-          clickTracking: { enable: false, enableText: false }, // disable link wrapping
+          clickTracking: { enable: false, enableText: false },
           openTracking: { enable: true },
         },
       };
@@ -538,15 +734,17 @@ export async function GET(req) {
       timestamp: new Date(),
       testMode: isTest,
       internalOnly,
-      recipientOverride: recipient || null,
+      recipientOverride: recipientRaw || null,
       customers: emailLogs,
     });
 
     await sendSlackMessage(
       `📢 *${isTest ? "TEST" : "PRODUCTION"} Invoice Status Report:* ${
         customersEmailed.length
-      } customer(s) emailed${recipient ? ` (scope: ${recipient})` : ""}${
-        internalOnly ? " (internal-only)" : ""
+      } customer(s) emailed${
+        recipientRaw ? ` (scope: ${recipientRaw})` : ""
+      }${internalOnly ? " (internal-only)" : ""}${
+        entries.length === 0 ? " [NO MATCHES]" : ""
       }.\n${customersEmailed.map((e) => `• ${e}`).join("\n")}`
     );
 
@@ -559,7 +757,7 @@ export async function GET(req) {
       customersNotified: customersEmailed.length,
       customers: customersEmailed,
       testMode: isTest,
-      recipient: recipient || null,
+      recipient: recipientRaw || null,
       internalOnly,
     });
   } catch (error) {

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Rental Invoice - #<%= invoiceNumber %></title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; }
+    h2 { color: #333; }
+    p { margin: 0.5em 0; }
+    a { color: #007bff; text-decoration: none; }
+
+    .unsubscribe {
+      font-size: 0.9em;
+      color: #888;
+      margin-top: 2em;
+      border-top: 1px solid #ddd;
+      padding-top: 1em;
+    }
+    .unsubscribe a {
+      color: #888;
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <h2>Your Suremix Cylinder Rental Invoice is Ready</h2>
+  <p>Hello <strong><%= companyName %>, Bevgo here.</strong>,</p>
+  <p>Your monthly rental invoice <strong>#<%= invoiceNumber %></strong> has been generated.</p>
+  <p>You can view or download your invoice here:</p>
+  <a href="<%= invoicePDFURL %>" class="link-button">View Rental Invoice</a>
+
+  <p><strong>Invoice Date:</strong> <%= invoiceDate %></p>
+  <p><strong>Invoice Total:</strong> R<%= invoiceTotal %></p>
+
+  <p>Thank you for choosing Bevgo. 🚀</p>
+
+  <div class="unsubscribe">
+    <p>If you'd like to stop receiving future emails, you can <a href="https://client-portal.bevgo.co.za/unsubscribe">unsubscribe here</a>.</p>
+  </div>
+</body>
+</html>

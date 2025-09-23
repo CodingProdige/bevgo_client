@@ -159,7 +159,7 @@ export async function POST(req) {
       rebatePercentage,
       rebateAmount,
       order_canceled: false,
-      payment_status: "Pending",
+      payment_status: "Pending"
     };
 
     await setDoc(doc(db, "orders", orderNumber), orderDetails);

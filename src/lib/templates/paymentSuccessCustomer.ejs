@@ -1,0 +1,17 @@
+<%- include("_layout", {
+    subject,
+    body: `
+      <p>Hi <strong><%= companyName %></strong>,</p>
+  
+      <p>We’ve received your payment for invoice <strong>#<%= invoiceNumber %></strong>.</p>
+  
+      <p><strong>Amount Paid:</strong> R<%= amountPaid %></p>
+  
+      <p>You can download your invoice here:<br/>
+        <a href="<%= invoicePDFURL %>" target="_blank">📎 View Invoice</a>
+      </p>
+  
+      <p>Thank you for your business.</p>
+    `
+  }) %>
+  

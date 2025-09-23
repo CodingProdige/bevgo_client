@@ -1,0 +1,11 @@
+<%- include("_layout", {
+    subject,
+    body: `
+      <p>Hi <strong><%= companyName %></strong>,</p>
+  
+      <p>Your payment attempt for invoice <strong>#<%= invoiceNumber %></strong> was <span style="color:red;">CANCELLED</span>.</p>
+  
+      <p>If this was unintentional, please retry via your invoice link. If you need assistance, contact us at <a href="mailto:info@bevgo.co.za">info@bevgo.co.za</a>.</p>
+    `
+  }) %>
+  

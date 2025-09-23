@@ -1,0 +1,14 @@
+<%- include("_layout", {
+    subject,
+    body: `
+      <p><strong>Payment Received</strong></p>
+  
+      <p>Invoice <strong>#<%= invoiceNumber %></strong> has been marked as <strong>Paid</strong>.</p>
+  
+      <p><strong>Customer:</strong> <%= companyName %><br/>
+         <strong>Amount Paid:</strong> R<%= amountPaid %></p>
+  
+      <p><a href="<%= invoicePDFURL %>" target="_blank">📎 View Invoice</a></p>
+    `
+  }) %>
+  

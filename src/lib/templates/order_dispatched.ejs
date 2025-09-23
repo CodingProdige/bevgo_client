@@ -1,0 +1,15 @@
+<% 
+const subject = `Your Order #${orderNumber} is on the Way`;
+
+const htmlBody = `
+  <p>Hi <strong>${companyName}</strong>,</p>
+
+  <p>Your order <strong>#${orderNumber}</strong> has been dispatched and is now on its way to you.</p>
+
+  <p>Thank you for choosing Bevgo — we appreciate your business.</p>
+
+  <p>Regards,<br/>Bevgo Team</p>
+`; 
+%>
+
+<%- include("_layout", { subject, body: htmlBody, unsubscribeUrl }) %>
