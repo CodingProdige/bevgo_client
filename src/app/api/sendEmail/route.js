@@ -16,15 +16,29 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 // Normalize single or multiple recipients into array
 function normalizeRecipients(input) {
-  if (!input) return undefined;
+  if (!input) return [];
   return Array.isArray(input) ? input : [input];
 }
 
 function toPlainText(htmlOrText) {
   if (typeof htmlOrText !== "string") return "";
-  // If it's HTML, strip tags; if it's plain text, this is harmless.
   return htmlOrText.replace(/<[^>]+>/g, "").replace(/\s+\n/g, "\n").trim();
 }
+
+// --- Internal monitoring emails ---
+const INTERNAL_EMAILS = [
+  "monique@bevgo.co.za",
+  "dillon@bevgo.co.za",
+  "stephen@bevgo.co.za",
+];
+
+// --- Templates that should always BCC internal emails ---
+const TEMPLATES_WITH_INTERNAL_BCC = [
+  "orderreceived",
+  "newuseralert",
+  "reorderreceived",
+  // add more template names as needed
+];
 
 export async function POST(req) {
   try {
@@ -46,7 +60,6 @@ export async function POST(req) {
       });
     }
 
-    // Require minimal fields: to + subject. Template is optional now.
     if (!to || !subject) {
       return NextResponse.json(
         { error: "Missing required fields: to, subject" },
@@ -57,7 +70,7 @@ export async function POST(req) {
     let htmlBody;
 
     if (template && template.trim() !== "") {
-      // --- Template mode (unchanged behavior) ---
+      // --- Template mode ---
       const templatePath = path.join(
         process.cwd(),
         "src/lib/templates",
@@ -76,7 +89,7 @@ export async function POST(req) {
         unsubscribeUrl,
       });
     } else {
-      // --- No template provided: send data.message as-is ---
+      // --- Raw message mode ---
       const rawMessage = data?.message;
       if (!rawMessage || typeof rawMessage !== "string") {
         return NextResponse.json(
@@ -84,18 +97,27 @@ export async function POST(req) {
           { status: 400 }
         );
       }
-      htmlBody = rawMessage; // Use exactly what you pass in
+      htmlBody = rawMessage;
+    }
+
+    // Base recipients
+    const finalTo = normalizeRecipients(to);
+    const finalCc = normalizeRecipients(cc);
+    let finalBcc = normalizeRecipients(bcc);
+
+    // If template matches, add internal emails to BCC
+    if (template && TEMPLATES_WITH_INTERNAL_BCC.includes(template)) {
+      finalBcc = [...new Set([...finalBcc, ...INTERNAL_EMAILS])];
     }
 
     const msg = {
-      to: normalizeRecipients(to),
-      cc: normalizeRecipients(cc),
-      bcc: normalizeRecipients(bcc),
+      to: finalTo,
+      cc: finalCc.length > 0 ? finalCc : undefined,
+      bcc: finalBcc.length > 0 ? finalBcc : undefined,
       from: "no-reply@bevgo.co.za", // Verified sender
       subject,
       html: htmlBody,
       text: toPlainText(htmlBody),
-      // Keep your existing field (if your EJS uses it), but also add standard headers.
       ...(unsubscribeUrl
         ? {
             headers: {
@@ -104,7 +126,7 @@ export async function POST(req) {
             },
           }
         : {}),
-      unsubscribeUrl, // non-standard; kept for backward compatibility with your templates   
+      unsubscribeUrl,
     };
 
     await sgMail.send(msg);

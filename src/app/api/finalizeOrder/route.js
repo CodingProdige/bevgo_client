@@ -1,27 +1,3 @@
-/**
- * ✅ Finalize Order Endpoint
- *
- * This endpoint:
- * - Receives a `userId` and `companyCode` from the client
- * - Fetches the matching user/customer document using the companyCode
- * - Fetches the user's cart totals from the cartTotals API
- * - Calculates applicable rebate based on subtotal
- * - Generates a unique 8-digit order number
- * - Creates a new order document in the "orders" collection
- * - Clears the cart for the user with the matching `userId`
- *
- * Expected payload:
- * {
- *   userId: string,
- *   companyCode: string,
- *   payment_terms?: string
- * }
- *
- * Returns:
- * - Order number, rebate info, order total, and customer details
- */
-
-
 import path from "path";
 import { promises as fs } from "fs";
 import ejs from "ejs";
@@ -40,6 +16,20 @@ import {
 import { NextResponse } from "next/server";
 
 const CART_TOTALS_API_URL = "https://bevgo-client.vercel.app/api/cartTotals";
+const UPDATE_STOCK_API_URL = "https://bevgo-pricelist.vercel.app/updateProductStock";
+
+// 🔧 Helper: Send Slack alert
+async function sendSlackAlert(message) {
+  try {
+    await fetch(process.env.SLACK_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: message }),
+    });
+  } catch (err) {
+    console.error("⚠️ Failed to send Slack alert:", err.message);
+  }
+}
 
 async function generateUniqueOrderNumber() {
   let orderNumber;
@@ -165,6 +155,37 @@ export async function POST(req) {
     await setDoc(doc(db, "orders", orderNumber), orderDetails);
     console.log("✅ Order saved to Firestore");
 
+    // 🔧 Batch update product stock (lenient, log errors + Slack alert if failed)
+    try {
+      const stockUpdateRes = await fetch(UPDATE_STOCK_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: (cartData.cartDetails || []).map(item => ({
+            unique_code: item.unique_code,
+            quantity: item.quantity,
+          })),
+        }),
+      });
+
+      if (!stockUpdateRes.ok) {
+        const errorText = await stockUpdateRes.text();
+        console.error("⚠️ Stock update failed:", stockUpdateRes.status, errorText);
+        await sendSlackAlert(
+          `⚠️ Stock update failed for order #${orderNumber}\nStatus: ${stockUpdateRes.status}\nError: ${errorText}`
+        );
+      } else {
+        const stockUpdateData = await stockUpdateRes.json();
+        console.log("📦 Stock update response:", stockUpdateData);
+      }
+    } catch (err) {
+      console.error("⚠️ Failed to call stock update API:", err.message);
+      await sendSlackAlert(
+        `⚠️ Stock update API call failed for order #${orderNumber}\nError: ${err.message}`
+      );
+    }
+
+    // Clear cart
     const cartUserRef = doc(db, "users", userId);
     await updateDoc(cartUserRef, { cart: [] });
     console.log("🧹 Cleared user cart");
