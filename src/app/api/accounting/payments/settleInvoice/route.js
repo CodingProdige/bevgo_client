@@ -14,7 +14,7 @@ import {
 } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
-// Utility: calculate available credit
+// 🔹 Utility: calculate available credit (ignores deleted)
 async function getAvailableCredit(companyCode) {
   const paymentsRef = collection(db, "payments");
   const q = query(paymentsRef, where("companyCode", "==", companyCode));
@@ -25,6 +25,7 @@ async function getAvailableCredit(companyCode) {
 
   snap.forEach((doc) => {
     const p = doc.data();
+    if (p.deleted) return; // 🚫 skip deleted
     totalCredit += Number(p.amount || 0);
     totalAllocated += Number(p.allocated || 0);
   });
@@ -36,109 +37,193 @@ async function getAvailableCredit(companyCode) {
   };
 }
 
+// 🔹 Utility: log accounting actions
+async function logAccountingAction(action) {
+  try {
+    await addDoc(collection(db, "accountingLogs"), {
+      ...action,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("❌ Failed to log accounting action:", err.message);
+  }
+}
+
+/**
+ * POST - Settle Invoice(s)
+ *
+ * Modes:
+ * 1. Direct Invoice Settlement
+ *    → Pass { orderNumbers: ["123"], autoSettle: false }
+ *    → Settles explicitly listed invoices if enough credit.
+ *
+ * 2. Auto Settle Specific Customer
+ *    → Pass { companyCode: "DC2070", autoSettle: true }
+ *    → Checks available credit & settles invoices (FIFO) for that customer only.
+ *
+ * 3. Admin Multi-Customer Auto Settle
+ *    → Pass { autoSettle: true, isAdmin: true }
+ *    → Runs across ALL customers, settling what can be settled (FIFO per customer).
+ */
 export async function POST(req) {
   try {
-    const { companyCode, orderNumber } = await req.json();
+    const { orderNumbers, companyCode, autoSettle = false, isAdmin = false } =
+      await req.json();
 
-    if (!companyCode || !orderNumber) {
-      return NextResponse.json(
-        { error: "Missing companyCode or orderNumber" },
-        { status: 400 }
-      );
-    }
+    const results = [];
 
-    // Fetch invoice
-    const invoiceRef = doc(db, "invoices", orderNumber);
-    const invoiceSnap = await getDocs(query(collection(db, "invoices"), where("orderNumber", "==", orderNumber)));
-    if (invoiceSnap.empty) {
-      return NextResponse.json(
-        { error: `Invoice ${orderNumber} not found` },
-        { status: 404 }
-      );
-    }
-    const invoiceDoc = invoiceSnap.docs[0];
-    const invoice = invoiceDoc.data();
-    const invoiceTotal = Number(invoice.finalTotals?.finalTotal || 0);
+    // Helper: process a single invoice settlement
+    const processInvoice = async (invoiceDoc) => {
+      const invoice = invoiceDoc.data();
+      const companyCode = invoice?.customer?.companyCode;
+      if (!companyCode) return { error: "Invoice missing companyCode" };
 
-    // Check credit
-    const creditSummary = await getAvailableCredit(companyCode);
-    if (creditSummary.availableCredit < invoiceTotal) {
-      return NextResponse.json(
-        { error: "Insufficient credit to settle this invoice", creditSummary },
-        { status: 400 }
-      );
-    }
+      const invoiceTotal = Number(invoice.finalTotals?.finalTotal || 0);
 
-    // Fetch unallocated payments (FIFO)
-    const paymentsRef = collection(db, "payments");
-    const paymentsSnap = await getDocs(
-      query(paymentsRef, where("companyCode", "==", companyCode))
-    );
-
-    let remaining = invoiceTotal;
-    const batch = writeBatch(db);
-    const fromPayments = [];
-
-    paymentsSnap.forEach((pDoc) => {
-      if (remaining <= 0) return;
-      const p = pDoc.data();
-      const unallocated = Number(p.unallocated || 0);
-
-      if (unallocated > 0) {
-        const allocateAmt = Math.min(remaining, unallocated);
-        fromPayments.push({ paymentId: pDoc.id, amount: allocateAmt });
-
-        batch.update(pDoc.ref, {
-          allocated: (p.allocated || 0) + allocateAmt,
-          unallocated: unallocated - allocateAmt,
-        });
-
-        remaining -= allocateAmt;
+      // Check credit
+      const creditSummary = await getAvailableCredit(companyCode);
+      if (creditSummary.availableCredit < invoiceTotal) {
+        return {
+          orderNumber: invoice.orderNumber,
+          error: "Insufficient credit",
+          creditSummary,
+        };
       }
-    });
 
-    if (remaining > 0) {
+      // Fetch unallocated payments (FIFO)
+      const paymentsRef = collection(db, "payments");
+      const paymentsSnap = await getDocs(
+        query(paymentsRef, where("companyCode", "==", companyCode))
+      );
+
+      let remaining = invoiceTotal;
+      const batch = writeBatch(db);
+      const fromPayments = [];
+
+      paymentsSnap.forEach((pDoc) => {
+        if (remaining <= 0) return;
+        const p = pDoc.data();
+        if (p.deleted) return;
+
+        const unallocated = Number(p.unallocated || 0);
+        if (unallocated > 0) {
+          const allocateAmt = Math.min(remaining, unallocated);
+          fromPayments.push({ paymentId: pDoc.id, amount: allocateAmt });
+
+          batch.update(pDoc.ref, {
+            allocated: (p.allocated || 0) + allocateAmt,
+            unallocated: unallocated - allocateAmt,
+          });
+
+          remaining -= allocateAmt;
+        }
+      });
+
+      if (remaining > 0) {
+        return {
+          orderNumber: invoice.orderNumber,
+          error: "Allocation failed — not enough unallocated payments",
+          fromPayments,
+        };
+      }
+
+      // Create allocation doc
+      const allocationRef = await addDoc(collection(db, "allocations"), {
+        companyCode,
+        invoiceId: invoice.orderNumber,
+        amount: invoiceTotal,
+        fromPayments,
+        date: new Date().toISOString(),
+        createdBy: "system",
+      });
+
+      const now = new Date().toISOString();
+      const invoiceRef = doc(db, "invoices", invoice.orderNumber);
+      const orderRef = doc(db, "orders", invoice.orderNumber);
+
+      batch.update(invoiceRef, {
+        payment_status: "Paid",
+        date_settled: now,
+        allocationId: allocationRef.id,
+      });
+      batch.update(orderRef, {
+        payment_status: "Paid",
+        date_settled: now,
+        allocationId: allocationRef.id,
+      });
+
+      await batch.commit();
+
+      await logAccountingAction({
+        action: "SETTLE_INVOICE",
+        companyCode,
+        orderNumber: invoice.orderNumber,
+        amount: invoiceTotal,
+        performedBy: "system",
+        details: { fromPayments, allocationId: allocationRef.id },
+      });
+
+      const updatedCredit = await getAvailableCredit(companyCode);
+      return {
+        message: `Invoice ${invoice.orderNumber} settled successfully`,
+        allocationId: allocationRef.id,
+        fromPayments,
+        creditSummary: updatedCredit,
+      };
+    };
+
+    // Mode 1: Explicit orderNumbers
+    if (orderNumbers && Array.isArray(orderNumbers) && orderNumbers.length > 0) {
+      for (const orderNumber of orderNumbers) {
+        const snap = await getDocs(
+          query(collection(db, "invoices"), where("orderNumber", "==", orderNumber))
+        );
+        if (snap.empty) {
+          results.push({ orderNumber, error: "Invoice not found" });
+        } else {
+          results.push(await processInvoice(snap.docs[0]));
+        }
+      }
+    }
+
+    // Mode 2: Auto settle for specific customer
+    else if (autoSettle && companyCode) {
+      const snap = await getDocs(
+        query(
+          collection(db, "invoices"),
+          where("customer.companyCode", "==", companyCode),
+          where("payment_status", "==", "Pending")
+        )
+      );
+      for (const docSnap of snap.docs) {
+        results.push(await processInvoice(docSnap));
+      }
+    }
+
+    // Mode 3: Admin auto settle all customers
+    else if (autoSettle && isAdmin) {
+      const snap = await getDocs(
+        query(collection(db, "invoices"), where("payment_status", "==", "Pending"))
+      );
+      for (const docSnap of snap.docs) {
+        results.push(await processInvoice(docSnap));
+      }
+    }
+
+    else {
       return NextResponse.json(
-        { error: "Allocation failed — not enough unallocated payments" },
+        { error: "Invalid request. Provide orderNumbers, or autoSettle with companyCode/isAdmin." },
         { status: 400 }
       );
     }
 
-    // Create allocation doc
-    const allocationRef = await addDoc(collection(db, "allocations"), {
-      companyCode,
-      invoiceId: orderNumber,
-      amount: invoiceTotal,
-      fromPayments,
-      date: new Date().toISOString(),
-      createdBy: "system",
-    });
-
-    // Update invoice + order
-    const now = new Date().toISOString();
-    batch.update(invoiceRef, {
-      payment_status: "Paid",
-      date_settled: now,
-    });
-    batch.update(doc(db, "orders", orderNumber), {
-      payment_status: "Paid",
-      date_settled: now,
-    });
-
-    // Commit all changes
-    await batch.commit();
-
-    // Return success
-    const updatedCredit = await getAvailableCredit(companyCode);
     return NextResponse.json({
-      message: `Invoice ${orderNumber} settled successfully`,
-      allocationId: allocationRef.id,
-      fromPayments,
-      creditSummary: updatedCredit,
+      message: "Settlement process complete",
+      results,
     });
   } catch (err) {
     return NextResponse.json(
-      { error: err.message || "Failed to settle invoice" },
+      { error: err.message || "Failed to settle invoices" },
       { status: 500 }
     );
   }

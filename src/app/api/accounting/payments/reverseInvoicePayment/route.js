@@ -10,11 +10,10 @@ import {
   where,
   getDoc,
   writeBatch,
-  updateDoc
 } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
-// Utility: calculate available credit
+// Utility: calculate available credit (ignores deleted payments)
 async function getAvailableCredit(companyCode) {
   const paymentsRef = collection(db, "payments");
   const q = query(paymentsRef, where("companyCode", "==", companyCode));
@@ -25,6 +24,7 @@ async function getAvailableCredit(companyCode) {
 
   snap.forEach((doc) => {
     const p = doc.data();
+    if (p.deleted) return; // 🚫 skip deleted
     totalCredit += Number(p.amount || 0);
     totalAllocated += Number(p.allocated || 0);
   });
@@ -32,16 +32,24 @@ async function getAvailableCredit(companyCode) {
   return {
     totalCredit,
     totalAllocated,
-    availableCredit: totalCredit - totalAllocated
+    availableCredit: totalCredit - totalAllocated,
   };
 }
 
 export async function POST(req) {
   try {
-    const { orderNumber, reason = "Reversal", status = "Pending", reversedBy = "system" } = await req.json();
+    const {
+      orderNumber,
+      reason = "Reversal",
+      status = "Pending", // could also be "Bad Debt"
+      reversedBy = "system",
+    } = await req.json();
 
     if (!orderNumber) {
-      return NextResponse.json({ error: "Missing orderNumber" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing orderNumber" },
+        { status: 400 }
+      );
     }
 
     // Fetch allocations for this invoice
@@ -62,6 +70,10 @@ export async function POST(req) {
 
     for (const allocDoc of allocSnap.docs) {
       const allocation = allocDoc.data();
+
+      // 🛡️ Defensive guard: skip already reversed allocations
+      if (allocation.status === "Reversed") continue;
+
       companyCode = allocation.companyCode;
       totalRestored += allocation.amount;
 
@@ -72,19 +84,23 @@ export async function POST(req) {
 
         if (paymentSnap.exists()) {
           const payment = paymentSnap.data();
+
+          // 🚫 Skip if payment was soft-deleted
+          if (payment.deleted) continue;
+
           batch.update(paymentRef, {
-            allocated: (payment.allocated || 0) - fp.amount,
-            unallocated: (payment.unallocated || 0) + fp.amount
+            allocated: Math.max(0, (payment.allocated || 0) - fp.amount),
+            unallocated: (payment.unallocated || 0) + fp.amount,
           });
         }
       }
 
-      // Mark allocation as reversed (soft delete)
+      // Mark allocation as reversed
       batch.update(allocDoc.ref, {
         status: "Reversed",
         reversedAt: new Date().toISOString(),
         reversedBy,
-        reversalReason: reason
+        reversalReason: reason,
       });
     }
 
@@ -94,15 +110,26 @@ export async function POST(req) {
 
     batch.update(invoiceRef, {
       payment_status: status, // "Pending" or "Bad Debt"
-      date_settled: null
+      date_settled: null,
     });
 
     batch.update(orderRef, {
       payment_status: status,
-      date_settled: null
+      date_settled: null,
     });
 
     await batch.commit();
+
+    // 🔐 Log action
+    await logAccountingAction({
+      action: "REVERSE_INVOICE",
+      companyCode,
+      orderNumber,
+      amount: totalRestored,
+      performedBy: reversedBy,
+      details: { reason, status }
+    });
+
 
     const updatedCredit = await getAvailableCredit(companyCode);
 
@@ -111,7 +138,7 @@ export async function POST(req) {
       orderNumber,
       amountRestored: totalRestored,
       newStatus: status,
-      creditSummary: updatedCredit
+      creditSummary: updatedCredit,
     });
   } catch (err) {
     return NextResponse.json(
