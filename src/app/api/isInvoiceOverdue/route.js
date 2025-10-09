@@ -25,11 +25,14 @@ export async function GET(req) {
     let result = "Ignored";
 
     if (status === "Paid") {
+      // ✅ Always trust Paid in Firestore
       result = "Paid";
-    } else if (status === "Pending" && method === "EFT") {
-      if (dueDate < today) {
-        result = "Overdue";
+    } else if (status === "Pending") {
+      // ✅ Only calculate overdue logic for Pending
+      if (method === "EFT") {
+        result = dueDate < today ? "Overdue" : "Pending";
       } else {
+        // For Cash, Card, Payfast, Yoco: trust Firestore Pending until settled manually
         result = "Pending";
       }
     }

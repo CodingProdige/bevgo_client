@@ -11,43 +11,99 @@ export async function POST(req) {
       console.error("❌ Missing orderNumber in request body");
       return NextResponse.json({ error: "Missing orderNumber" }, { status: 400 });
     }
-    console.log(`🔎 Fetching invoice for orderNumber=${orderNumber}, companyCode=${companyCode || "N/A"}`);
-
-    // 1️⃣ Get invoice details
-    const invoiceRes = await axios.post(
-      `${process.env.BASE_URL}/api/getInvoice`,
-      { orderNumber, companyCode: companyCode || "", isAdmin: true }
+    console.log(
+      `🔎 Generating PayFast link for orderNumber=${orderNumber}, companyCode=${companyCode || "N/A"}`
     );
 
-    if (!invoiceRes.data?.invoices?.length) {
-      console.error("❌ No invoice found for", orderNumber);
-      return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
+    let baseTotal = null;
+    let customer = null;
+
+    // 1️⃣ Try get invoice
+    let invoice = null;
+    try {
+      const invoiceRes = await axios.post(`${process.env.BASE_URL}/api/getInvoice`, {
+        orderNumber,
+        companyCode: companyCode || "",
+        isAdmin: true,
+      });
+
+      if (invoiceRes.data?.invoices?.length) {
+        invoice = invoiceRes.data.invoices[0];
+        baseTotal = parseFloat(invoice.finalTotals.finalTotal);
+        customer = {
+          companyCode: invoice.customer.companyCode,
+          companyName: invoice.customer.name,
+          email: invoice.customer.email,
+        };
+        console.log("📄 Invoice found:", { orderNumber, baseTotal, customer });
+      }
+    } catch (err) {
+      console.warn("⚠️ Invoice fetch failed:", err.message);
     }
 
-    const invoice = invoiceRes.data.invoices[0];
-    console.log("📄 Invoice data retrieved:", {
-      invoiceNumber: invoice.invoiceNumber,
-      customer: invoice.customer?.name,
-      finalTotal: invoice.finalTotals?.finalTotal,
-    });
+    // 2️⃣ If no invoice, fallback to order
+    if (!invoice) {
+      try {
+        const orderRes = await axios.get(`${process.env.BASE_URL}/api/getOrder`, {
+          params: { orderNumber, isAdmin: true }
+        });
 
-    const baseTotal = parseFloat(invoice.finalTotals.finalTotal);
+        if (orderRes.data?.order) {
+          const order = orderRes.data.order;
+          baseTotal = parseFloat(
+            order.calcFinalTotal?.finalTotal || order.order_details?.total
+          );
+          console.log("📦 Order found:", { orderNumber, baseTotal });
 
-    // 2️⃣ Calculate PayFast fees
+          // Fetch customer from companyCode
+          const resolvedCode = order.companyCode || companyCode;
+          if (resolvedCode) {
+            try {
+              const userRes = await axios.post(
+                `https://bevgo-client.vercel.app/api/getUser`,
+                { companyCode: resolvedCode }
+              );
+
+              if (userRes.status === 200 && userRes.data?.data) {
+                customer = {
+                  companyCode: resolvedCode,
+                  companyName: userRes.data.data.companyName,
+                  email: userRes.data.data.email,
+                };
+              }
+            } catch (err) {
+              console.error("❌ Customer fetch failed:", err.message);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("❌ Order fetch failed:", err.message);
+      }
+    }
+
+
+    if (!baseTotal || !customer) {
+      console.error("❌ Could not find invoice or order + customer details");
+      return NextResponse.json(
+        { error: "Invoice/Order not found or missing customer" },
+        { status: 404 }
+      );
+    }
+
+    // 3️⃣ Calculate PayFast fees
     const PERCENTAGE = 0.0295;
-    const FIXED_FEE = 0.50;
+    const FIXED_FEE = 0.5;
     const adjustedTotal = (baseTotal + FIXED_FEE) / (1 - PERCENTAGE);
     const paymentFee = adjustedTotal - baseTotal;
 
-    console.log("💰 Calculated totals:", {
+    console.log("💰 Totals:", {
       baseTotal,
       adjustedTotal: adjustedTotal.toFixed(2),
       paymentFee: paymentFee.toFixed(2),
     });
 
-    // 3️⃣ Build PayFast payload
-    const paymentId = invoice.orderNumber || invoice.invoiceNumber;
-
+    // 4️⃣ Build PayFast payload
+    const paymentId = orderNumber;
     const payload = {
       merchant_id: process.env.PAYFAST_MERCHANT_ID,
       merchant_key: process.env.PAYFAST_MERCHANT_KEY,
@@ -56,16 +112,16 @@ export async function POST(req) {
       notify_url: `${process.env.BASE_URL}/api/payfastWebhook`,
       m_payment_id: paymentId,
       amount: adjustedTotal.toFixed(2),
-      item_name: `Invoice #${paymentId}`,
-      custom_str1: invoice.customer.companyCode,
-      name_first: invoice.customer.name || "Customer",
-      email_address: invoice.customer.email || "info@bevgo.co.za",
+      item_name: `Payment for #${paymentId}`,
+      custom_str1: customer.companyCode, // companyCode
+      custom_str2: baseTotal.toFixed(2), // true total excl. fees
+      name_first: customer.companyName || "Customer",
+      email_address: customer.email || "info@bevgo.co.za",
     };
-    
 
     console.log("📦 PayFast payload prepared:", payload);
 
-    // 4️⃣ Generate PayFast URL
+    // 5️⃣ Generate PayFast URL
     const queryString = new URLSearchParams(payload).toString();
     const paymentLink = `https://www.payfast.co.za/eng/process?${queryString}`;
 
@@ -73,24 +129,15 @@ export async function POST(req) {
 
     return NextResponse.json({
       message: "Payment link generated",
-      invoiceTotal: baseTotal.toFixed(2),
+      invoiceOrOrderTotal: baseTotal.toFixed(2),
       paymentFee: paymentFee.toFixed(2),
       adjustedTotal: adjustedTotal.toFixed(2),
       paymentLink,
     });
   } catch (error) {
-    console.error("❌ PayFast link generation error:", {
-      message: error.message,
-      response: error.response?.data,
-      status: error.response?.status,
-    });
-
+    console.error("❌ PayFast link generation error:", error.message);
     return NextResponse.json(
-      {
-        error: "Failed to generate payment link",
-        details: error.response?.data || error.message,
-        status: error.response?.status || 500,
-      },
+      { error: "Failed to generate payment link", details: error.message },
       { status: 500 }
     );
   }

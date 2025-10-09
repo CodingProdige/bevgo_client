@@ -68,6 +68,7 @@ export async function POST(req) {
 
     const orderDetails = orderData?.order_details ?? {};
 
+    // 🆕 Include the new delivery fields
     const renderedHTML = ejs.render(templateContent, {
       qrCodeURL,
       logoURL: "https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Header%20Banner.png?alt=media&token=fb6ef880-b618-46c5-a1c3-e9bc1dd3690e",
@@ -97,6 +98,9 @@ export async function POST(req) {
       subtotalIncludingReturnables: orderDetails.subtotalIncludingReturnables || 0,
       totalItems: orderDetails.totalItems || 0,
       rebateAmount: orderDetails.rebateAmount || 0,
+      deliveryInstructions: orderData.deliveryInstructions || "",
+      deliveryAddress: orderData.deliveryAddress || "",        // 🆕 Added
+      deliveryPostalCode: orderData.deliveryPostalCode || ""   // 🆕 Added
     });
 
     console.log("✅ Delivery Note HTML rendered successfully.");
@@ -115,6 +119,7 @@ export async function POST(req) {
 
     const deliveryNotePDFURL = response.data.pdfUrl;
 
+    // 🆕 Store deliveryAddress + postalCode in Firestore too
     const deliveryNoteData = {
       qrCodeURL,
       logoURL: "https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Header%20Banner.png?alt=media&token=fb6ef880-b618-46c5-a1c3-e9bc1dd3690e",
@@ -144,6 +149,9 @@ export async function POST(req) {
       subtotalIncludingReturnables: orderDetails.subtotalIncludingReturnables || 0,
       totalItems: orderDetails.totalItems || 0,
       rebateAmount: orderDetails.rebateAmount || 0,
+      deliveryInstructions: orderData.deliveryInstructions || "",
+      deliveryAddress: orderData.deliveryAddress || "",        // 🆕 Added
+      deliveryPostalCode: orderData.deliveryPostalCode || ""   // 🆕 Added
     };
 
     const deliveryNoteRef = doc(db, "deliveryNotes", orderNumber);

@@ -10,11 +10,11 @@ export async function POST(req) {
       return NextResponse.json({ error: "Missing orderNumber" }, { status: 400 });
     }
 
-    const VAT_PERCENTAGE = 0.15; // 15% VAT
-    const YOCO_PERCENTAGE = 0.0295; // 2.95% Yoco fee
-    const YOCO_FIXED_FEE = 0.50; // Fixed R0.50 fee
+    const VAT_PERCENTAGE = 0.15; 
+    const YOCO_PERCENTAGE = 0.0295; 
+    const YOCO_FIXED_FEE = 0.50; 
 
-    // ✅ Fetch order details from Firestore
+    // ✅ Fetch order details
     const orderRef = doc(db, "orders", orderNumber);
     const orderSnap = await getDoc(orderRef);
 
@@ -29,41 +29,55 @@ export async function POST(req) {
       subtotalIncludingReturnables,
       rebateAmount,
       rebatePercentage,
-      vat,
-      total,
-      returnableSubtotal, // ✅ Use this as the "returnablesAdded"
+      returnableSubtotal,
+      appliedCredit = 0
     } = orderData.order_details;
 
-    // ✅ Step 1: Calculate the VAT on the subtotal including returnables
+    // ✅ Step 1: VAT
     const recalculatedVAT = subtotalIncludingReturnables * VAT_PERCENTAGE;
 
-    // ✅ Step 2: Calculate total including VAT
+    // ✅ Step 2: Total incl VAT
     let adjustedTotal = subtotalIncludingReturnables + recalculatedVAT;
 
     let yocoFee = 0;
-
-    // ✅ Step 3: Apply Yoco fee only if payment method is Card
     if (cardOrCash === "Card") {
       yocoFee = adjustedTotal * YOCO_PERCENTAGE + YOCO_FIXED_FEE;
       adjustedTotal += yocoFee;
     }
 
-    // ✅ Step 4: Deduct returnables (incl. VAT) at the end
+    // ✅ Step 3: Deduct returnables (incl VAT)
     const returnablesInclVAT = (returnsExclVat || 0) * (1 + VAT_PERCENTAGE);
     adjustedTotal -= returnablesInclVAT;
+
+    // ✅ Step 4: Deduct applied credit (can go negative, that’s fine)
+    adjustedTotal -= appliedCredit;
+
+    // ✅ Normalize -0.00 → 0.00
+    if (Math.abs(adjustedTotal) < 0.005) {
+      adjustedTotal = 0;
+    }
+
+    // ✅ Step 5: Decide payment method
+    let paymentMethod = cardOrCash || "N/A";
+    if (appliedCredit > 0 && adjustedTotal <= 0) {
+      paymentMethod = "Available Credit";
+    } else if (appliedCredit > 0 && adjustedTotal > 0) {
+      paymentMethod = `Available Credit + ${cardOrCash || "N/A"}`;
+    }
 
     return NextResponse.json({
       subtotalBeforeVAT: subtotal.toFixed(2),
       subtotalAfterRebate: subtotalAfterRebate.toFixed(2),
       subtotalIncludingReturnables: subtotalIncludingReturnables.toFixed(2),
-      returnablesAdded: returnableSubtotal.toFixed(2), // ✅ Show actual returnable subtotal from order
-      returnablesDeducted: returnablesInclVAT.toFixed(2), // ✅ Deducted at the end with VAT included
+      returnablesAdded: returnableSubtotal.toFixed(2),
+      returnablesDeducted: returnablesInclVAT.toFixed(2),
       recalculatedVAT: recalculatedVAT.toFixed(2),
       yocoFee: yocoFee.toFixed(2),
-      finalTotal: adjustedTotal.toFixed(2),
+      finalTotal: adjustedTotal.toFixed(2),   // ✅ reduced by appliedCredit
       rebateAmount: rebateAmount.toFixed(2),
-      paymentMethod: cardOrCash || "N/A",
-      rebatePercentage: rebatePercentage,
+      rebatePercentage,
+      appliedCredit: appliedCredit.toFixed(2),
+      paymentMethod
     }, { status: 200 });
 
   } catch (error) {

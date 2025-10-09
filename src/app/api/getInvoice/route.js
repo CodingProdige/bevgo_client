@@ -40,13 +40,20 @@ export async function POST(req) {
       }
 
       const invoices = [invoiceSnap.data()];
-      const { totalPendingValue, totalPaidValue } = sumTotalsByStatus(invoices);
-      const pct = percentagesPendingVsPaid(invoices); // on this single invoice (effectively 0/100 or 100/0 or 0/0)
+
+      // 🆕 add derivedStatus
+      const enrichedInvoices = invoices.map((inv) => ({
+        ...inv,
+        derivedStatus: deriveStatus(inv),
+      }));
+
+      const { totalPendingValue, totalPaidValue } = sumTotalsByStatus(enrichedInvoices);
+      const pct = percentagesPendingVsPaid(enrichedInvoices);
 
       return NextResponse.json(
         {
           message: "Invoice retrieved successfully",
-          invoices,
+          invoices: enrichedInvoices,
           totalPendingValue,
           totalPaidValue,
           periodApplied: false,
@@ -86,21 +93,14 @@ export async function POST(req) {
     }
 
     // 🗓️ Compute an effective date window (intersection of explicit dateRange and periodDays)
-    // - If dateRange provided, use it
-    // - If periodDays provided, intersect with [now - N, now]
-    // - Apply a single orderBy/startAt/endAt to Firestore
     let effectiveFromISO = null;
     let effectiveToISO = null;
 
-    // Start with explicit dateRange if present
     if (dateRange?.from && dateRange?.to) {
-      const fromISO = new Date(dateRange.from).toISOString();
-      const toISO = new Date(dateRange.to).toISOString();
-      effectiveFromISO = fromISO;
-      effectiveToISO = toISO;
+      effectiveFromISO = new Date(dateRange.from).toISOString();
+      effectiveToISO = new Date(dateRange.to).toISOString();
     }
 
-    // Intersect with last N days if periodDays provided
     if (days) {
       const periodFrom = new Date(now);
       periodFrom.setDate(now.getDate() - days);
@@ -108,7 +108,6 @@ export async function POST(req) {
       const periodToISO = now.toISOString();
 
       if (effectiveFromISO && effectiveToISO) {
-        // intersection: max(from), min(to)
         effectiveFromISO = new Date(Math.max(Date.parse(effectiveFromISO), Date.parse(periodFromISO))).toISOString();
         effectiveToISO = new Date(Math.min(Date.parse(effectiveToISO), Date.parse(periodToISO))).toISOString();
       } else {
@@ -117,7 +116,6 @@ export async function POST(req) {
       }
     }
 
-    // Apply time window if we have one
     if (effectiveFromISO && effectiveToISO) {
       constraints.push(orderBy("invoiceDate"));
       constraints.push(startAt(effectiveFromISO));
@@ -125,7 +123,6 @@ export async function POST(req) {
       console.log(`📅 Effective date window: ${effectiveFromISO} to ${effectiveToISO}`);
     }
 
-    // Direct Firestore payment_status filter (skip if "Overdue" which is derived)
     if (paymentStatus && normalizedStatus !== "overdue") {
       constraints.push(where("payment_status", "==", paymentStatus));
       console.log(`🔍 Firestore filter: payment_status == ${paymentStatus}`);
@@ -157,23 +154,21 @@ export async function POST(req) {
     // Map docs
     let invoices = snapshot.docs.map((d) => d.data());
 
-    // Derived Overdue filter (applies after date filtering)
+    // 🆕 add derivedStatus
+    invoices = invoices.map((inv) => ({
+      ...inv,
+      derivedStatus: deriveStatus(inv),
+    }));
+
     if (normalizedStatus === "overdue") {
       let cutoffDate = dateRange?.to ? new Date(dateRange.to) : now;
-
       invoices = invoices.filter((invoice) => {
-        const status = (invoice.payment_status || "").toLowerCase();
-        const due = parseDue(invoice.dueDate);
-        const isOverdue = due && due < cutoffDate && status !== "paid" && status !== "pending";
-        return isOverdue;
+        return invoice.derivedStatus === "Overdue";
       });
       console.log("⚠️ Applied derived Overdue filter after fetch.");
     }
 
-    // 🧮 Totals by status (over returned invoices)
     const { totalPendingValue, totalPaidValue } = sumTotalsByStatus(invoices);
-
-    // 🧮 Pending vs Paid counts/percentages (over returned invoices)
     const pct = percentagesPendingVsPaid(invoices);
 
     return NextResponse.json(
@@ -265,4 +260,26 @@ function parseDue(dueDate) {
     const dt = new Date(dueDate);
     return isNaN(dt) ? null : dt;
   }
+}
+
+/* 🆕 deriveStatus helper */
+function deriveStatus(inv) {
+  const status = (inv.payment_status || "").toLowerCase();
+  const method = (inv.paymentMethod || "").toLowerCase();
+  const due = parseDue(inv.dueDate);
+  const today = new Date();
+
+  if (status === "paid") return "Paid";
+
+  if (status === "pending") {
+    if (method === "eft") {
+      return due && due < today ? "Overdue" : "Pending";
+    }
+    if (["cash", "card", "payfast", "yoco"].includes(method)) {
+      return "Paid";
+    }
+    return "Pending";
+  }
+
+  return "Ignored";
 }

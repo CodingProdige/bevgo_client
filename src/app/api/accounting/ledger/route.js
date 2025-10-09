@@ -9,8 +9,8 @@ import fs from "fs";
 import path from "path";
 import axios from "axios";
 
-// 🔹 Utility: apply date filters
-function inDateRange(entryDate, fromDate, toDate) {
+// 🔹 Utility: apply date filters AFTER running balance
+function isInRange(entryDate, fromDate, toDate) {
   const ts = new Date(entryDate).getTime();
   if (fromDate && ts < new Date(fromDate).getTime()) return false;
   if (toDate && ts > new Date(toDate).getTime()) return false;
@@ -25,10 +25,9 @@ export async function POST(req) {
       toDate,
       isAdmin = false,
       returnAll = false,
-      generatePdf = false
+      generatePdf = false,
     } = await req.json();
 
-    // 🔹 Validation
     if (!companyCode && !returnAll) {
       return NextResponse.json(
         { error: "Missing companyCode (or set returnAll=true)" },
@@ -46,10 +45,9 @@ export async function POST(req) {
       return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     };
 
-    // --- Fetch invoices + payments ---
     const [invoices, payments] = await Promise.all([
-      fetchDocs("invoices", "customer.companyCode"), // ✅ nested field path
-      fetchDocs("payments", "companyCode")
+      fetchDocs("invoices", "customer.companyCode"),
+      fetchDocs("payments", "companyCode"),
     ]);
 
     const ledger = [];
@@ -57,11 +55,6 @@ export async function POST(req) {
     // 🔹 Invoices → Debit
     invoices.forEach((inv) => {
       const settledDate = inv.date_settled || inv.invoiceDate;
-      if (!inDateRange(settledDate, fromDate, toDate)) return;
-
-      // double-check companyCode match
-      if (!returnAll && companyCode && inv?.customer?.companyCode !== companyCode) return;
-
       ledger.push({
         type: "Invoice",
         id: inv.orderNumber || inv.id,
@@ -69,15 +62,13 @@ export async function POST(req) {
         date: settledDate,
         debit: Number(inv.finalTotals?.finalTotal || 0),
         credit: 0,
-        status: inv.payment_status || "Pending"
+        status: inv.payment_status || "Pending",
       });
     });
 
     // 🔹 Payments → Credit
     payments.forEach((p) => {
       const effectiveDate = p.paymentDate || p.date;
-      if (!inDateRange(effectiveDate, fromDate, toDate)) return;
-
       ledger.push({
         type: "Payment",
         id: p.id,
@@ -89,19 +80,48 @@ export async function POST(req) {
         reference: p.reference,
         allocated: p.allocated || 0,
         unallocated: p.unallocated || 0,
-        status: p.deleted ? "Deleted" : p.status || "Captured"
+        status: p.deleted ? "Deleted" : p.status || "Captured",
       });
     });
 
-    // 🔹 Sort chronologically
+    // 🔹 Sort ALL entries chronologically
     ledger.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-    // 🔹 Running balance
+    // 🔹 Running balance across ALL history
     let balance = 0;
-    const ledgerWithBalance = ledger.map((entry) => {
-      balance += entry.debit - entry.credit; // debit increases, credit decreases
+    const fullLedger = ledger.map((entry) => {
+      balance += entry.debit - entry.credit;
       return { ...entry, balanceAfter: balance };
     });
+
+    // 🔹 Slice by requested date range
+    const filteredLedger = fullLedger.filter((entry) =>
+      isInRange(entry.date, fromDate, toDate)
+    );
+
+    // 🔹 Opening balance (balance carried before first in-range entry)
+    const openingBalance =
+      filteredLedger.length > 0
+        ? fullLedger.find(
+            (e) => new Date(e.date) < new Date(filteredLedger[0].date)
+          )?.balanceAfter || 0
+        : 0;
+
+    // 🔹 Closing balance (last in-range balance)
+    const closingBalance =
+      filteredLedger.length > 0
+        ? filteredLedger[filteredLedger.length - 1].balanceAfter
+        : openingBalance;
+
+    // 🔹 Totals
+    const totals = filteredLedger.reduce(
+      (acc, e) => {
+        acc.debit += e.debit;
+        acc.credit += e.credit;
+        return acc;
+      },
+      { debit: 0, credit: 0 }
+    );
 
     // --- If PDF requested ---
     if (generatePdf) {
@@ -115,14 +135,17 @@ export async function POST(req) {
         companyCode: returnAll ? "ALL CUSTOMERS" : companyCode,
         fromDate,
         toDate,
-        entries: ledgerWithBalance
+        entries: filteredLedger,
+        openingBalance,
+        closingBalance,
+        totals,
       });
 
       const pdfRes = await axios.post(
         "https://generatepdf-th2kiymgaa-uc.a.run.app/generatepdf",
         {
           htmlContent: renderedHTML,
-          fileName: `ledger-${returnAll ? "ALL" : companyCode}-${Date.now()}`
+          fileName: `ledger-${returnAll ? "ALL" : companyCode}-${Date.now()}`,
         }
       );
 
@@ -133,15 +156,20 @@ export async function POST(req) {
       return NextResponse.json({
         message: "Ledger PDF generated successfully",
         pdfUrl: pdfRes.data.pdfUrl,
-        ledger: ledgerWithBalance
+        ledger: filteredLedger,
+        openingBalance,
+        closingBalance,
+        totals,
       });
     }
 
-    // --- Default JSON response ---
     return NextResponse.json({
       message: "Ledger retrieved successfully",
       companyCode: returnAll ? "ALL CUSTOMERS" : companyCode,
-      ledger: ledgerWithBalance
+      ledger: filteredLedger,
+      openingBalance,
+      closingBalance,
+      totals,
     });
   } catch (err) {
     return NextResponse.json(

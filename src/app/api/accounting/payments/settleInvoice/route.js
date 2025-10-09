@@ -11,6 +11,7 @@ import {
   updateDoc,
   addDoc,
   writeBatch,
+  getDoc,
 } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
@@ -54,7 +55,7 @@ async function logAccountingAction(action) {
  *
  * Modes:
  * 1. Direct Invoice Settlement
- *    → Pass { orderNumbers: ["123"], autoSettle: false }
+ *    → Pass { orderNumber: "123" } OR { orderNumbers: ["123", "456"] }
  *    → Settles explicitly listed invoices if enough credit.
  *
  * 2. Auto Settle Specific Customer
@@ -67,8 +68,13 @@ async function logAccountingAction(action) {
  */
 export async function POST(req) {
   try {
-    const { orderNumbers, companyCode, autoSettle = false, isAdmin = false } =
-      await req.json();
+    const {
+      orderNumber,   // 👈 NEW support for single invoice
+      orderNumbers,  // 👈 existing support for multiple
+      companyCode,
+      autoSettle = false,
+      isAdmin = false,
+    } = await req.json();
 
     const results = [];
 
@@ -80,7 +86,46 @@ export async function POST(req) {
 
       const invoiceTotal = Number(invoice.finalTotals?.finalTotal || 0);
 
-      // Check credit
+      // 🔎 Check linked order
+      const orderRef = doc(db, "orders", invoice.orderNumber);
+      const orderSnap = await getDoc(orderRef);
+
+      if (orderSnap.exists()) {
+        const order = orderSnap.data();
+        const orderTotal = Number(order?.order_details?.total || 0);
+
+        if (order.prePaid === true || orderTotal === 0) {
+          // ✅ Mark invoice + order as Paid without allocations
+          const now = new Date().toISOString();
+          await updateDoc(doc(db, "invoices", invoice.orderNumber), {
+            payment_status: "Paid",
+            date_settled: now,
+            allocationId: null, // no allocation doc
+          });
+          await updateDoc(orderRef, {
+            payment_status: "Paid",
+            date_settled: now,
+            allocationId: null,
+          });
+
+          await logAccountingAction({
+            action: "SETTLE_INVOICE",
+            companyCode,
+            orderNumber: invoice.orderNumber,
+            amount: invoiceTotal,
+            performedBy: "system",
+            details: { skippedAllocation: true },
+          });
+
+          return {
+            orderNumber: invoice.orderNumber,
+            message: "Invoice settled (prepaid/credit). No allocation doc created.",
+            skippedAllocation: true,
+          };
+        }
+      }
+
+      // 🔎 Otherwise continue with normal allocation flow
       const creditSummary = await getAvailableCredit(companyCode);
       if (creditSummary.availableCredit < invoiceTotal) {
         return {
@@ -139,7 +184,6 @@ export async function POST(req) {
 
       const now = new Date().toISOString();
       const invoiceRef = doc(db, "invoices", invoice.orderNumber);
-      const orderRef = doc(db, "orders", invoice.orderNumber);
 
       batch.update(invoiceRef, {
         payment_status: "Paid",
@@ -172,14 +216,18 @@ export async function POST(req) {
       };
     };
 
-    // Mode 1: Explicit orderNumbers
-    if (orderNumbers && Array.isArray(orderNumbers) && orderNumbers.length > 0) {
-      for (const orderNumber of orderNumbers) {
+    // Mode 1: Explicit orderNumber(s)
+    if (
+      (orderNumbers && Array.isArray(orderNumbers) && orderNumbers.length > 0) ||
+      orderNumber
+    ) {
+      const numbers = orderNumbers || [orderNumber]; // normalize to array
+      for (const num of numbers) {
         const snap = await getDocs(
-          query(collection(db, "invoices"), where("orderNumber", "==", orderNumber))
+          query(collection(db, "invoices"), where("orderNumber", "==", num))
         );
         if (snap.empty) {
-          results.push({ orderNumber, error: "Invoice not found" });
+          results.push({ orderNumber: num, error: "Invoice not found" });
         } else {
           results.push(await processInvoice(snap.docs[0]));
         }
@@ -212,7 +260,7 @@ export async function POST(req) {
 
     else {
       return NextResponse.json(
-        { error: "Invalid request. Provide orderNumbers, or autoSettle with companyCode/isAdmin." },
+        { error: "Invalid request. Provide orderNumber/orderNumbers, or autoSettle with companyCode/isAdmin." },
         { status: 400 }
       );
     }

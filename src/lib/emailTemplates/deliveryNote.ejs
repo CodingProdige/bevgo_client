@@ -255,6 +255,17 @@
       justify-content: space-between;
       width: 100%;
     }
+    .delivery-instructions {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: flex-start;
+  border: 1px solid black;
+  padding: 0.5rem;
+  margin-top: 0.5rem;
+  background-color: #fafafa;
+}
+
   </style>
 </head>
 <body>
@@ -292,13 +303,31 @@
 
         <!-- Customer Details -->
         <div class="customer-details">
-            <h3>Deliver To:</h3>
-            <p><%= customer.name %></p>
+          <h3>Deliver To:</h3>
+          <p><%= customer.name %></p>
+
+          <% if (deliveryAddress && deliveryAddress.trim() !== "") { %>
+            <p><%= deliveryAddress %></p>
+            <% if (deliveryPostalCode && deliveryPostalCode.trim() !== "") { %>
+              <p><%= deliveryPostalCode %></p>
+            <% } %>
+          <% } else { %>
             <p><%= customer.address %></p>
-            <p><%= customer.contact %></p>
-            <p><%= customer.email %></p>
-            <p>VAT No: <%= customer.vat %></p>
-        </div>
+          <% } %>
+
+          <p><%= customer.contact %></p>
+          <p><%= customer.email %></p>
+          <p>VAT No: <%= customer.vat %></p>
+      </div>
+
+        <!-- Delivery Instructions -->
+        <% if (deliveryInstructions && deliveryInstructions.trim() !== "") { %>
+          <div class="delivery-instructions" style="border: 1px solid black; padding: 0.5rem; margin-top: 0.5rem;">
+            <h3>Delivery Instructions:</h3>
+            <p><%= deliveryInstructions %></p>
+          </div>
+        <% } %>
+
 
         <!-- Invoice Items (Columned List with Headings) -->
         <div class="order-items">

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Ledger Statement</title>
+  <title>Payments Statement</title>
   <style>
     body, html {
       margin: 0;
@@ -50,11 +50,11 @@
     th, td {
       border: 1px solid #ccc;
       padding: 6px;
-      text-align: right;
+      text-align: center;
+      font-size: 11px;
     }
     th {
       background: #f8f8f8;
-      text-align: center;
     }
     td.left {
       text-align: left;
@@ -92,72 +92,58 @@
     <!-- Header -->
     <div class="header">
       <img class="bevgo-logo" src="https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo%20Header%20Banner.png?alt=media&token=fb6ef880-b618-46c5-a1c3-e9bc1dd3690e" alt="Bevgo Logo">
-      <h2>Ledger Statement - <%= companyCode %></h2>
+      <h2>Payments Statement - <%= companyCode %></h2>
       <% if (fromDate && toDate) { %>
         <p class="period">Period: <%= fromDate %> to <%= toDate %></p>
       <% } %>
     </div>
 
-    <!-- Ledger Table -->
+    <!-- Payments Table -->
     <table>
       <thead>
         <tr>
           <th>Date</th>
-          <th>Type</th>
-          <th class="left">Details</th>
-          <th>Debit</th>
-          <th>Credit</th>
-          <th>Balance</th>
+          <th class="left">Reference</th>
+          <th>Method</th>
+          <th>Amount</th>
+          <th>Allocated</th>
+          <th>Unallocated</th>
+          <th>Status</th>
         </tr>
       </thead>
       <tbody>
-        <!-- Opening Balance -->
-        <tr>
-          <td colspan="5" class="left"><strong>Opening Balance</strong></td>
-          <td><strong>R<%= openingBalance.toFixed(2) %></strong></td>
-        </tr>
-
-        <% entries.forEach(e => { %>
+        <% payments.forEach(p => { %>
           <tr>
-            <td><%= new Date(e.date).toLocaleDateString("en-ZA") %></td>
-            <td><%= e.type %></td>
-            <td class="left">
-              <% if (e.type === "Invoice") { %>
-                Invoice #<%= e.id %>
-              <% } else if (e.type === "Payment") { %>
-                Payment via <%= e.method %> — Ref: <%= e.reference %>
-              <% } %>
-            </td>
-            <td><%= e.debit ? "R" + e.debit.toFixed(2) : "" %></td>
-            <td><%= e.credit ? "R" + e.credit.toFixed(2) : "" %></td>
-            <td>R<%= e.balanceAfter.toFixed(2) %></td>
+            <td><%= new Date(p.paymentDate).toLocaleDateString("en-ZA") %></td>
+            <td class="left"><%= p.reference || "-" %></td>
+            <td><%= p.method || "-" %></td>
+            <td>R<%= (p.amount || 0).toFixed(2) %></td>
+            <td>R<%= (p.allocated || 0).toFixed(2) %></td>
+            <td>R<%= (p.unallocated || 0).toFixed(2) %></td>
+            <td><%= p.status %></td>
           </tr>
         <% }) %>
-
-        <!-- Closing Balance -->
-        <tr>
-          <td colspan="5" class="left"><strong>Closing Balance</strong></td>
-          <td><strong>R<%= closingBalance.toFixed(2) %></strong></td>
-        </tr>
       </tbody>
     </table>
 
-    <!-- Totals -->
+        <!-- Summary -->
     <div class="summary">
       <h3>Summary</h3>
       <div class="summary-row">
-        <span>Total Debits:</span>
-        <span>R<%= totals.debit.toFixed(2) %></span>
+        <span>Total Payments:</span>
+        <span>R<%= payments.reduce((acc, p) => acc + (p.amount || 0), 0).toFixed(2) %></span>
       </div>
-      <div class="summary-row">
-        <span>Total Credits:</span>
-        <span>R<%= totals.credit.toFixed(2) %></span>
-      </div>
+      <% if (creditSummary) { %>
+        <div class="summary-row">
+          <span>Available Credit:</span>
+          <span>R<%= creditSummary.availableCredit.toFixed(2) %></span>
+        </div>
+      <% } %>
     </div>
 
     <!-- Footer -->
     <div class="footer">
-      Bevgo Distributions (Pty) Ltd  
+      Bevgo Distributions (Pty) Ltd 
       | support@bevgo.co.za | +27 (0)21 123 4567
     </div>
   </div>

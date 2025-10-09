@@ -11,6 +11,11 @@ import {
   getDoc
 } from "firebase/firestore";
 import { NextResponse } from "next/server";
+import ejs from "ejs";
+import fs from "fs";
+import path from "path";
+import axios from "axios";
+
 
 // 🔹 Utility: derive payment status
 function computePaymentStatus(p) {
@@ -65,16 +70,34 @@ async function generateUniquePaymentNumber() {
 export async function POST(req) {
   try {
     const body = await req.json();
-    const { companyCode, amount, method, reference, createdBy, paymentDate } = body;
+    let {
+      companyCode,
+      amount,
+      method,
+      reference,
+      createdBy,
+      paymentDate,
+      grossPaid,
+      fee,
+      creditApplied,    // optional immediate allocation
+      orderNumber       // optional (for credit allocations)
+    } = body;
 
-    if (!companyCode || !amount || !method) {
+    if (!companyCode || amount === undefined || !method) {
       return NextResponse.json(
         { error: "Missing required fields: companyCode, amount, method" },
         { status: 400 }
       );
     }
 
-    const validMethods = ["Payfast", "EFT", "Card", "Cash"];
+    // 🔹 Edge case: negative final total → treat as credit (invert amount, force method = "Credit")
+    if (amount < 0) {
+      amount = Math.abs(amount);
+      method = "Credit"; // 👈 introduce a "Credit" method type for returnable overpayment
+      reference = reference || `Returnables Credit for Order #${orderNumber || "N/A"}`;
+    }
+
+    const validMethods = ["Payfast", "EFT", "Card", "Cash", "Credit"];
     if (!validMethods.includes(method)) {
       return NextResponse.json(
         { error: `Invalid method. Must be one of: ${validMethods.join(", ")}` },
@@ -82,43 +105,51 @@ export async function POST(req) {
       );
     }
 
-    // Default references
-    let finalReference;
-    if (method === "EFT") {
-      if (!reference) {
-        return NextResponse.json(
-          { error: "Reference required for EFT payments" },
-          { status: 400 }
-        );
-      }
-      finalReference = reference;
-    } else if (method === "Card") {
-      finalReference = "Card Payment";
-    } else if (method === "Cash") {
-      finalReference = "Cash Payment";
-    } else if (method === "Payfast") {
-      finalReference = "Payfast Payment";
+    // Default references if not already set
+    let finalReference = reference;
+    if (!reference) {
+      if (method === "EFT") finalReference = "EFT Payment";
+      if (method === "Card") finalReference = "Card Payment";
+      if (method === "Cash") finalReference = "Cash Payment";
+      if (method === "Payfast") finalReference = "Payfast Payment";
+      if (method === "Credit") finalReference = "Returnables Credit";
     }
 
     const now = new Date().toISOString();
     const paymentNumber = await generateUniquePaymentNumber();
 
-    // Insert payment
-    const paymentsRef = collection(db, "payments");
-    const docRef = await addDoc(paymentsRef, {
+    // 👇 Ensure appliedCredit never exceeds amount
+    const appliedCredit = creditApplied
+      ? Math.min(Number(creditApplied), Number(amount))
+      : 0;
+
+    const paymentDoc = {
       companyCode,
       paymentNumber,
       amount: Number(amount),
+      grossPaid: grossPaid ? Number(grossPaid) : null,
+      fee: fee ? Number(fee) : null,
       method,
       reference: finalReference,
-      paymentDate: paymentDate || now, // ⬅️ bank/payment date
+      paymentDate: paymentDate || now,
       createdBy: createdBy || "system",
-      allocated: 0,
-      unallocated: Number(amount),
+      allocated: appliedCredit,
+      unallocated: Number(amount) - appliedCredit,
+      creditAllocations: appliedCredit > 0 ? [
+        {
+          orderNumber: orderNumber || null,
+          amount: appliedCredit,
+          date: now,
+          createdBy: createdBy || "system"
+        }
+      ] : [],
       createdAt: now,
-      date: now, // capture timestamp
+      date: now,
       deleted: false
-    });
+    };
+
+    const paymentsRef = collection(db, "payments");
+    const docRef = await addDoc(paymentsRef, paymentDoc);
 
     const creditSummary = await getAvailableCredit(companyCode);
 
@@ -126,8 +157,11 @@ export async function POST(req) {
       message: "Payment captured successfully",
       paymentId: docRef.id,
       paymentNumber,
-      status: "Unallocated",
-      creditSummary
+      status: appliedCredit > 0
+        ? (appliedCredit === Number(amount) ? "Fully Allocated" : "Partially Allocated")
+        : "Unallocated",
+      creditSummary,
+      paymentDoc
     });
   } catch (err) {
     return NextResponse.json(
@@ -137,14 +171,28 @@ export async function POST(req) {
   }
 }
 
+
+
 /**
- * GET - List payments (lightweight, no allocations, with companyName enrichment)
+ * GET - List payments (with optional PDF export, date filtering, and companyName enrichment)
  */
 export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url);
     let companyCode = searchParams.get("companyCode");
     const isAdmin = searchParams.get("isAdmin") === "true";
+    const generatePdf = searchParams.get("generatePdf") === "true";
+    const fromDate = searchParams.get("fromDate")
+      ? new Date(searchParams.get("fromDate"))
+      : null;
+    const toDate = searchParams.get("toDate")
+      ? new Date(searchParams.get("toDate"))
+      : null;
+
+    // 🔹 If toDate exists, push to end of day
+    if (toDate) {
+      toDate.setHours(23, 59, 59, 999);
+    }
 
     // 🔹 If admin, ignore companyCode (global view)
     if (isAdmin) {
@@ -161,28 +209,40 @@ export async function GET(req) {
     const paymentsRef = collection(db, "payments");
     let q;
 
+    // 🔹 Build query (filter by company if not admin)
     if (!isAdmin && companyCode) {
       q = query(
         paymentsRef,
         where("companyCode", "==", companyCode),
-        orderBy("date", "desc")
+        orderBy("paymentDate", "desc")
       );
     } else {
-      // Admin: ignore companyCode, return all payments
-      q = query(paymentsRef, orderBy("date", "desc"));
+      q = query(paymentsRef, orderBy("paymentDate", "desc"));
     }
 
     const snap = await getDocs(q);
-    const paymentsRaw = [];
+    let paymentsRaw = [];
     const companyCodes = [];
 
     for (const docSnap of snap.docs) {
       const data = docSnap.data();
       if (data.deleted) continue;
 
-      paymentsRaw.push({ paymentId: docSnap.id, ...data });
+      // 🔹 Normalize payment date (fallback to `date`)
+      const paymentDate = data.paymentDate || data.date;
+      if (!paymentDate) continue;
+
+      const ts = new Date(paymentDate);
+      // 🔹 Apply date range filtering if provided
+      if (fromDate && ts < fromDate) continue;
+      if (toDate && ts > toDate) continue;
+
+      paymentsRaw.push({ paymentId: docSnap.id, ...data, paymentDate: ts });
       if (data.companyCode) companyCodes.push(data.companyCode);
     }
+
+    // 🔹 Sort payments again in JS just in case
+    paymentsRaw.sort((a, b) => new Date(b.paymentDate) - new Date(a.paymentDate));
 
     // 🔹 Deduplicate companyCodes and fetch names in batch
     const uniqueCodes = [...new Set(companyCodes)];
@@ -217,10 +277,47 @@ export async function GET(req) {
       companyName: companyNames[p.companyCode] || "Unknown",
     }));
 
-    const creditSummary = !isAdmin && companyCode
-      ? await getAvailableCredit(companyCode)
-      : null;
+    const creditSummary =
+      !isAdmin && companyCode ? await getAvailableCredit(companyCode) : null;
 
+    // --- If PDF requested ---
+    if (generatePdf) {
+      const templatePath = path.join(
+        process.cwd(),
+        "src/lib/templates/paymentspdf.ejs"
+      );
+      const templateContent = fs.readFileSync(templatePath, "utf-8");
+
+      const renderedHTML = ejs.render(templateContent, {
+        payments,
+        companyCode: companyCode || "ALL CUSTOMERS",
+        isAdmin,
+        creditSummary,
+        fromDate,
+        toDate,
+      });
+
+      const pdfRes = await axios.post(
+        "https://generatepdf-th2kiymgaa-uc.a.run.app/generatepdf",
+        {
+          htmlContent: renderedHTML,
+          fileName: `payments-${companyCode || "ALL"}-${Date.now()}`,
+        }
+      );
+
+      if (!pdfRes.data?.pdfUrl) {
+        throw new Error("PDF generation failed");
+      }
+
+      return NextResponse.json({
+        message: "Payments PDF generated successfully",
+        pdfUrl: pdfRes.data.pdfUrl,
+        payments,
+        creditSummary,
+      });
+    }
+
+    // --- Default JSON response ---
     return NextResponse.json({
       message: "Payments retrieved successfully",
       payments,
@@ -233,7 +330,6 @@ export async function GET(req) {
     );
   }
 }
-
 
 
 
@@ -308,33 +404,40 @@ export async function PUT(req) {
   }
 }
 
-
 /**
  * DELETE - Soft delete payment (via query params)
- * Example: DELETE /api/accounting/payments/capturePayment?paymentId=123&companyCode=DC2070&deletedBy=info@bevgo.co.za
+ * Example: DELETE /api/accounting/payments/capturePayment?paymentNumber=123&companyCode=DC2070&deletedBy=info@bevgo.co.za
  */
 export async function DELETE(req) {
   try {
     const { searchParams } = new URL(req.url);
-    const paymentId = searchParams.get("paymentId");
+    const paymentNumber = searchParams.get("paymentNumber");
     const companyCode = searchParams.get("companyCode");
     const deletedBy = searchParams.get("deletedBy");
 
-    if (!paymentId || !companyCode) {
+    if (!paymentNumber || !companyCode) {
       return NextResponse.json(
-        { error: "Missing required query params: paymentId, companyCode" },
+        { error: "Missing required query params: paymentNumber, companyCode" },
         { status: 400 }
       );
     }
 
-    const paymentRef = doc(db, "payments", paymentId);
-    const paymentSnap = await getDoc(paymentRef);
+    // 🔎 Find payment doc by paymentNumber + companyCode
+    const paymentsRef = collection(db, "payments");
+    const q = query(
+      paymentsRef,
+      where("paymentNumber", "==", paymentNumber),
+      where("companyCode", "==", companyCode)
+    );
+    const snap = await getDocs(q);
 
-    if (!paymentSnap.exists()) {
+    if (snap.empty) {
       return NextResponse.json({ error: "Payment not found" }, { status: 404 });
     }
 
-    const payment = paymentSnap.data();
+    const paymentDoc = snap.docs[0];
+    const paymentRef = paymentDoc.ref;
+    const payment = paymentDoc.data();
 
     // 🚫 Prevent deletion if already allocated
     if (payment.allocated > 0) {
@@ -355,7 +458,7 @@ export async function DELETE(req) {
 
     return NextResponse.json({
       message: "Payment deleted successfully (soft-delete)",
-      paymentId,
+      paymentNumber,
       status: "Deleted",
       creditSummary,
     });
@@ -366,3 +469,4 @@ export async function DELETE(req) {
     );
   }
 }
+

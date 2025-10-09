@@ -1,8 +1,10 @@
+// app/api/deleteOrder/route.js
 import { db } from "@/lib/firebaseConfig";
 import { doc, getDoc, deleteDoc } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
 const UPDATE_STOCK_API_URL = "https://bevgo-pricelist.vercel.app/updateProductStock";
+const USE_CREDIT_API_URL = "https://bevgo-client.vercel.app/api/accounting/payments/useCredit";
 
 // 🔧 Helper: Send Slack alert
 async function sendSlackAlert(message) {
@@ -19,10 +21,14 @@ async function sendSlackAlert(message) {
 
 export async function POST(req) {
   try {
-    const { orderNumber, only } = await req.json();
+    const { orderNumber, only, companyCode } = await req.json();
 
     if (!orderNumber) {
       return NextResponse.json({ error: "Missing orderNumber" }, { status: 400 });
+    }
+
+    if (!companyCode) {
+      return NextResponse.json({ error: "Missing companyCode" }, { status: 400 });
     }
 
     // Determine which collections to delete from
@@ -90,6 +96,30 @@ export async function POST(req) {
           `⚠️ Stock restore API call failed for order #${orderNumber}\nError: ${err.message}`
         );
       }
+    }
+
+    // ♻️ Reverse credit allocations for this order
+    try {
+      const reverseRes = await fetch(
+        `${USE_CREDIT_API_URL}?companyCode=${companyCode}&orderNumber=${orderNumber}`,
+        { method: "DELETE" }
+      );
+
+      if (reverseRes.ok) {
+        const reversedData = await reverseRes.json();
+        console.log("♻️ Credit reversed:", reversedData);
+      } else {
+        const errorText = await reverseRes.text();
+        console.error("⚠️ Credit reversal failed:", reverseRes.status, errorText);
+        await sendSlackAlert(
+          `⚠️ Credit reversal failed for order #${orderNumber}\nStatus: ${reverseRes.status}\nError: ${errorText}`
+        );
+      }
+    } catch (err) {
+      console.error("⚠️ Failed to call useCredit DELETE API:", err.message);
+      await sendSlackAlert(
+        `⚠️ useCredit DELETE API call failed for order #${orderNumber}\nError: ${err.message}`
+      );
     }
 
     return NextResponse.json(

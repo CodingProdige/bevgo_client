@@ -1,7 +1,6 @@
-import path from "path";
-import { promises as fs } from "fs";
-import ejs from "ejs";
-import { sendEmail } from "@/lib/emailService";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { db } from "@/lib/firebaseConfig";
 import {
   doc,
@@ -17,6 +16,7 @@ import { NextResponse } from "next/server";
 
 const CART_TOTALS_API_URL = "https://bevgo-client.vercel.app/api/cartTotals";
 const UPDATE_STOCK_API_URL = "https://bevgo-pricelist.vercel.app/updateProductStock";
+const USE_CREDIT_API_URL = "https://bevgo-client.vercel.app/api/accounting/payments/useCredit";
 
 // 🔧 Helper: Send Slack alert
 async function sendSlackAlert(message) {
@@ -55,63 +55,45 @@ export async function POST(req) {
   try {
     console.log("🔍 Incoming request to /api/finalizeOrder");
 
-    let body;
-    try {
-      body = await req.json();
-    } catch (err) {
-      console.error("❌ Failed to parse JSON body:", await req.text());
-      return NextResponse.json({ error: "Malformed JSON in request body" }, { status: 400 });
+    const body = await req.json();
+    const { 
+      userId, 
+      payment_terms, 
+      companyCode, 
+      useCredit = false,
+      paymentIntent = "N/A",
+      deliveryInstructions = "",
+      deliveryAddress = "",
+      deliveryPostalCode = "",
+      deliveryFee = 0
+    } = body;
+
+    if (!userId?.trim() || !companyCode?.trim()) {
+      return NextResponse.json({ error: "Missing userId or companyCode" }, { status: 400 });
     }
 
-    const { userId, payment_terms, companyCode } = body;
-
-    console.log("✅ Parsed body:", { userId, companyCode, payment_terms });
-
-    if (!userId?.trim()) {
-      console.warn("⚠️ Missing userId");
-      return NextResponse.json({ error: "Missing userId" }, { status: 400 });
-    }
-
-    if (!companyCode?.trim()) {
-      console.warn("⚠️ Missing companyCode");
-      return NextResponse.json({ error: "Missing companyCode" }, { status: 400 });
-    }
-
-    // Try find user by companyCode
-    console.log("🔎 Searching for user by companyCode:", companyCode);
+    // 🔎 Find user by companyCode
     let userSnap;
     const usersQuery = query(collection(db, "users"), where("companyCode", "==", companyCode));
     const userResults = await getDocs(usersQuery);
-
     if (!userResults.empty) {
       userSnap = userResults.docs[0];
-      console.log("✅ Found user in 'users' collection");
     } else {
       const customersQuery = query(collection(db, "customers"), where("companyCode", "==", companyCode));
       const customerResults = await getDocs(customersQuery);
-
-      if (!customerResults.empty) {
-        userSnap = customerResults.docs[0];
-        console.log("✅ Found user in 'customers' collection");
-      } else {
-        console.warn("❌ No user found for companyCode:", companyCode);
-        return NextResponse.json({ error: "User not found for provided companyCode" }, { status: 404 });
-      }
+      if (!customerResults.empty) userSnap = customerResults.docs[0];
+      else return NextResponse.json({ error: "User not found for provided companyCode" }, { status: 404 });
     }
 
     const userData = userSnap.data();
     const { email, companyName, emailOptOut } = userData;
-    console.log("📦 Retrieved user data:", { companyName, email });
+    const finalPaymentTerms = payment_terms?.trim() || userData?.payment_terms || null;
 
-    let finalPaymentTerms = payment_terms?.trim() || userData?.payment_terms || null;
-    console.log("📌 Final payment terms:", finalPaymentTerms);
-
-    // Fetch cart totals
-    console.log("🔁 Fetching cart totals from:", CART_TOTALS_API_URL);
+    // 🔁 Fetch cart totals including deliveryFee and useCredit flag
     const response = await fetch(CART_TOTALS_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId }),
+      body: JSON.stringify({ userId, companyCode, useCredit, deliveryFee }),
     });
 
     if (!response.ok) {
@@ -121,20 +103,16 @@ export async function POST(req) {
     }
 
     const cartData = await response.json();
-    console.log("🛒 Cart data received:", cartData);
-
     if (cartData.totalItems === 0) {
-      console.warn("🚫 Cart is empty");
       return NextResponse.json({ error: "Cart is empty" }, { status: 400 });
     }
 
     const rebatePercentage = calculateRebate(cartData.subtotal);
     const rebateAmount = (cartData.subtotal * rebatePercentage) / 100;
-    console.log("💸 Rebate calculated:", { rebatePercentage, rebateAmount });
-
     const orderNumber = await generateUniqueOrderNumber();
-    console.log("📦 Generated order number:", orderNumber);
+    const prePaid = cartData.total <= 0;
 
+    // 🧾 Store delivery fee and order data
     const orderDetails = {
       orderNumber,
       userId,
@@ -148,14 +126,50 @@ export async function POST(req) {
       order_details: cartData,
       rebatePercentage,
       rebateAmount,
+      deliveryFee: parseFloat(Number(deliveryFee).toFixed(2)),
       order_canceled: false,
-      payment_status: "Pending"
+      payment_status: "Pending",
+      prePaid,
+      paymentIntent,
+      deliveryInstructions,
+      deliveryAddress,
+      deliveryPostalCode,
     };
 
     await setDoc(doc(db, "orders", orderNumber), orderDetails);
-    console.log("✅ Order saved to Firestore");
 
-    // 🔧 Batch update product stock (lenient, log errors + Slack alert if failed)
+    // ⚡ Apply credit immediately if useCredit is true and credit available
+    const appliedCredit = Number(cartData.appliedCredit || 0);
+    if (useCredit && appliedCredit > 0) {
+      console.log(`💳 Applying R${appliedCredit} credit to order ${orderNumber}`);
+
+      try {
+        const creditRes = await fetch(USE_CREDIT_API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            companyCode,
+            orderNumber,
+            creditApplied: appliedCredit, // ✅ fixed to use actual applied credit
+          }),
+        });
+
+        if (!creditRes.ok) {
+          const errText = await creditRes.text();
+          throw new Error(errText);
+        }
+
+        const creditResult = await creditRes.json();
+        console.log("✅ Credit application result:", creditResult);
+      } catch (err) {
+        console.error("⚠️ Failed to apply credit:", err.message);
+        await sendSlackAlert(`⚠️ Failed to apply credit for order #${orderNumber}: ${err.message}`);
+      }
+    } else {
+      console.log("ℹ️ No credit applied (either useCredit=false or no available credit).");
+    }
+
+    // 🔧 Update product stock
     try {
       const stockUpdateRes = await fetch(UPDATE_STOCK_API_URL, {
         method: "POST",
@@ -170,35 +184,34 @@ export async function POST(req) {
 
       if (!stockUpdateRes.ok) {
         const errorText = await stockUpdateRes.text();
-        console.error("⚠️ Stock update failed:", stockUpdateRes.status, errorText);
         await sendSlackAlert(
           `⚠️ Stock update failed for order #${orderNumber}\nStatus: ${stockUpdateRes.status}\nError: ${errorText}`
         );
-      } else {
-        const stockUpdateData = await stockUpdateRes.json();
-        console.log("📦 Stock update response:", stockUpdateData);
       }
     } catch (err) {
-      console.error("⚠️ Failed to call stock update API:", err.message);
-      await sendSlackAlert(
-        `⚠️ Stock update API call failed for order #${orderNumber}\nError: ${err.message}`
-      );
+      await sendSlackAlert(`⚠️ Stock update API call failed for order #${orderNumber}\nError: ${err.message}`);
     }
 
-    // Clear cart
-    const cartUserRef = doc(db, "users", userId);
-    await updateDoc(cartUserRef, { cart: [] });
-    console.log("🧹 Cleared user cart");
+    // 🧹 Clear cart
+    await updateDoc(doc(db, "users", userId), { cart: [] });
 
     return NextResponse.json({
       message: "Order finalized successfully",
       orderNumber,
       rebatePercentage,
       rebateAmount,
+      deliveryFee: parseFloat(Number(deliveryFee).toFixed(2)),
       orderTotal: cartData.total ?? cartData.subtotal ?? 0,
+      appliedCredit: appliedCredit,
+      remainingCredit: cartData.remainingCredit,
       companyName,
       companyEmail: email,
       emailOptOut: emailOptOut ?? false,
+      prePaid,
+      paymentIntent,
+      deliveryInstructions,
+      deliveryAddress,
+      deliveryPostalCode,
     }, { status: 201 });
 
   } catch (error) {
