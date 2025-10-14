@@ -153,7 +153,7 @@ async function processInvoices({ testRun = false, testEmail, testCompanyCode, fi
         paymentMethod: "EFT",
         invoicePDFURL: null,
         payment_status: "Pending",
-        type: "Cylinder Rental",
+        type: "Rental",
         createdAt: new Date().toISOString(),
         is_test_invoice: testRun ? true : false
       };

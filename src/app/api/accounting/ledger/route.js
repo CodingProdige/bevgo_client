@@ -37,11 +37,13 @@ export async function POST(req) {
 
     // 🔹 Helper to fetch docs (supports nested field)
     const fetchDocs = async (coll, fieldPath) => {
-      let q = collection(db, coll);
+      let qRef = collection(db, coll);
       if (!returnAll && companyCode) {
-        q = query(q, where(fieldPath, "==", companyCode));
+        qRef = query(qRef, where(fieldPath, "==", companyCode));
       }
-      const snap = await getDocs(q);
+      // NOTE: we intentionally do NOT filter out deleted payments here,
+      // because we want to *show* them (but zero them out in math).
+      const snap = await getDocs(qRef);
       return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     };
 
@@ -66,21 +68,27 @@ export async function POST(req) {
       });
     });
 
-    // 🔹 Payments → Credit
+    // 🔹 Payments → Credit (show deleted but zero them out so totals/balance exclude them)
     payments.forEach((p) => {
       const effectiveDate = p.paymentDate || p.date;
+      const isDeleted = p.deleted === true;
+
       ledger.push({
         type: "Payment",
         id: p.id,
         companyCode: p.companyCode || null,
         date: effectiveDate,
         debit: 0,
-        credit: Number(p.amount || 0),
+        // Deleted payments are visible but excluded from math
+        credit: isDeleted ? 0 : Number(p.amount || 0),
         method: p.method,
         reference: p.reference,
-        allocated: p.allocated || 0,
-        unallocated: p.unallocated || 0,
-        status: p.deleted ? "Deleted" : p.status || "Captured",
+        allocated: isDeleted ? 0 : (p.allocated || 0),
+        unallocated: isDeleted ? 0 : (p.unallocated || 0),
+        status: isDeleted ? "Deleted" : (p.status || "Captured"),
+        // Optional UI helpers:
+        note: isDeleted ? `Deleted${p.deletedAt ? ` on ${p.deletedAt}` : ""}` : undefined,
+        originalCredit: isDeleted ? Number(p.amount || 0) : undefined,
       });
     });
 

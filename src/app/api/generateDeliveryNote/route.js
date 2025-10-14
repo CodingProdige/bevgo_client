@@ -98,6 +98,8 @@ export async function POST(req) {
       subtotalIncludingReturnables: orderDetails.subtotalIncludingReturnables || 0,
       totalItems: orderDetails.totalItems || 0,
       rebateAmount: orderDetails.rebateAmount || 0,
+      appliedCredit: orderDetails.appliedCredit || 0,
+      deliveryFee: orderDetails.deliveryFee || 0,
       deliveryInstructions: orderData.deliveryInstructions || "",
       deliveryAddress: orderData.deliveryAddress || "",        // 🆕 Added
       deliveryPostalCode: orderData.deliveryPostalCode || ""   // 🆕 Added
@@ -149,6 +151,8 @@ export async function POST(req) {
       subtotalIncludingReturnables: orderDetails.subtotalIncludingReturnables || 0,
       totalItems: orderDetails.totalItems || 0,
       rebateAmount: orderDetails.rebateAmount || 0,
+      appliedCredit: orderDetails.appliedCredit || 0,
+      deliveryFee: orderDetails.deliveryFee || 0,
       deliveryInstructions: orderData.deliveryInstructions || "",
       deliveryAddress: orderData.deliveryAddress || "",        // 🆕 Added
       deliveryPostalCode: orderData.deliveryPostalCode || ""   // 🆕 Added

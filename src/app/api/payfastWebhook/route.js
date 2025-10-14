@@ -1,10 +1,14 @@
-// app/api/payfastWebhook/route.js
 import { NextResponse } from "next/server";
 import axios from "axios";
 import { db } from "@/lib/firebaseConfig";
-import { doc, getDoc, updateDoc, collection, addDoc } from "firebase/firestore";
+import {
+  doc, getDoc, updateDoc,
+  collection, addDoc,
+  query, where, getDocs,
+} from "firebase/firestore";
 
-// 🔹 Utility: log accounting actions
+/* ----------------------------- helpers ----------------------------- */
+
 async function logAccountingAction(action) {
   try {
     await addDoc(collection(db, "accountingLogs"), {
@@ -16,20 +20,68 @@ async function logAccountingAction(action) {
   }
 }
 
+function mapPayfastToTxnStatus(s) {
+  switch ((s || "").toUpperCase()) {
+    case "COMPLETE": return "Paid";
+    case "CANCELLED": return "Cancelled";
+    case "FAILED": return "Failed";
+    case "PENDING":
+    default: return "Pending";
+  }
+}
+
+async function updateTransactionStatus(transactionNumber, payfastStatus) {
+  if (!transactionNumber) return { skipped: true, reason: "missing transactionNumber" };
+  try {
+    const res = await axios.post(
+      `${process.env.BASE_URL}/api/transactions/updateTransactionStatus`,
+      { transactionNumber, paymentStatus: mapPayfastToTxnStatus(payfastStatus) },
+      { timeout: 10000 }
+    );
+    return res.data;
+  } catch (err) {
+    console.error("❌ updateTransactionStatus error:", err.message);
+    return { error: err.message };
+  }
+}
+
+// ✅ Idempotency pre-check: do we already have a payment for this transaction?
+async function paymentAlreadyCaptured(transactionNumber) {
+  try {
+    if (!transactionNumber) return false;
+    const q = query(
+      collection(db, "payments"),
+      where("transactionNumber", "==", String(transactionNumber))
+    );
+    const snap = await getDocs(q);
+    return !snap.empty;
+  } catch (e) {
+    console.error("paymentAlreadyCaptured check failed:", e.message);
+    // fail-open
+    return false;
+  }
+}
+
+/* ------------------------------ webhook ------------------------------ */
+
 export async function POST(req) {
   try {
     const raw = await req.text();
-    const params = new URLSearchParams(raw);
-    const data = Object.fromEntries(params);
-
-    console.log("🔔 Incoming Payfast Webhook:", data);
+    const data = Object.fromEntries(new URLSearchParams(raw));
+    console.log("🔔 PayFast IPN:", data);
 
     const {
-      m_payment_id,     // = orderNumber
-      payment_status,
-      amount_gross,     // customer actually paid (incl. fee)
-      custom_str1,      // companyCode
-      custom_str2,      // base amount excl. fees
+      // IDs / routing
+      m_payment_id,        // legacy: invoice/order number OR (in PREORDER) the transactionNumber
+      // money + meta
+      payment_status,      // COMPLETE | PENDING | FAILED | CANCELLED
+      amount_gross,        // includes PayFast fee
+      custom_str1,         // companyCode
+      custom_str2,         // base amount excl. fees (we treat this as the "credit" amount)
+      custom_str3,         // transactionNumber (always set by our link generator)
+      custom_str4,         // paymentContext: INVOICE | ORDER | PREORDER
+      custom_str5,         // reference: invoiceNumber | orderNumber | "" (PREORDER)
+      // contact
       email_address,
     } = data;
 
@@ -37,166 +89,174 @@ export async function POST(req) {
       return NextResponse.json({ error: "Missing m_payment_id" }, { status: 400 });
     }
 
+    const companyCode = custom_str1 || "UNKNOWN";
+    const baseAmount = custom_str2 != null ? Number(custom_str2) : null;
+    const paymentContext = String(custom_str4 || "").toUpperCase();
+    const reference = custom_str5 || "";
+
+    // Prefer explicit transactionNumber; for PREORDER, m_payment_id == transactionNumber
+    const transactionNumber =
+      custom_str3 || (paymentContext === "PREORDER" ? String(m_payment_id) : null);
+
+    // 1) Always update initTransaction status
+    const txnStatusUpdate = await updateTransactionStatus(transactionNumber, payment_status);
+
+    /* 2) On success: capture payment (idempotent) and do minimal context-specific updates */
     let captureResult = null;
     let settleResult = null;
-    let updatedType = null;
-    let customerEmailResult = null;
-    let internalEmailResult = null;
+    let orderUpdateResult = null;
 
     if (payment_status === "COMPLETE") {
-      console.log(`✅ Payment successful for ${m_payment_id}`);
+      // fee = gross - base (if both present)
+      const fee =
+        amount_gross && baseAmount != null
+          ? Number((Number(amount_gross) - baseAmount).toFixed(2))
+          : 0;
 
-      // Always use base amount (excl. fees) for payment doc
-      const capturedAmount = custom_str2 ? Number(custom_str2) : null;
-      const fee = amount_gross && capturedAmount
-        ? (Number(amount_gross) - capturedAmount).toFixed(2)
-        : null;
+      // ✅ IDEMPOTENCY GUARD
+      const already = await paymentAlreadyCaptured(transactionNumber);
 
-      // 1️⃣ Check if invoice exists
-      const invoiceRef = doc(db, "invoices", m_payment_id);
-      const invoiceSnap = await getDoc(invoiceRef);
+      if (!already) {
+        try {
+          const url = `${process.env.BASE_URL}/api/accounting/payments/capturePayment`;
 
-      if (invoiceSnap.exists()) {
-        updatedType = "invoice";
-        const companyCode = custom_str1 || invoiceSnap.data()?.customer?.companyCode;
-
-        // Capture payment
-        captureResult = await axios.post(`${process.env.BASE_URL}/api/payments/capturePayment`, {
-          companyCode,
-          amount: capturedAmount,
-          grossPaid: Number(amount_gross),
-          fee: fee ? Number(fee) : 0,
-          method: "Payfast",
-          reference: `Payfast Transaction #${m_payment_id}`,
-          createdBy: "payfast-webhook",
-        }).then(r => r.data);
-
-        // Settle invoice (allocations handled here)
-        settleResult = await axios.post(`${process.env.BASE_URL}/api/payments/settleInvoice`, {
-          orderNumber: m_payment_id,
-        }).then(r => r.data);
-
-      } else {
-        // 2️⃣ Fallback to order
-        const orderRef = doc(db, "orders", m_payment_id);
-        const orderSnap = await getDoc(orderRef);
-
-        if (orderSnap.exists()) {
-          updatedType = "order";
-          const companyCode = custom_str1 || orderSnap.data()?.companyCode;
-
-          // Mark order as prepaid
-          await updateDoc(orderRef, { prePaid: true });
-          console.log(`⚡ Order ${m_payment_id} marked as prePaid`);
-
-          // Create new payment doc only (NO settle)
-          captureResult = await axios.post(`${process.env.BASE_URL}/api/payments/capturePayment`, {
+          // 🔑 SIMPLE RULE:
+          // - INVOICE → leave unallocated (no creditApplied)
+          // - ORDER/PREORDER → fully allocate now: creditApplied = baseAmount
+          const payload = {
             companyCode,
-            amount: capturedAmount,
-            grossPaid: Number(amount_gross),
-            fee: fee ? Number(fee) : 0,
+            amount: baseAmount,                         // allocation amount (excl. fees)
+            grossPaid: Number(amount_gross || 0),       // gross incl. fee
+            fee,
             method: "Payfast",
-            reference: `Payfast Transaction #${m_payment_id}`,
+            reference:
+              paymentContext === "INVOICE" ? `Payfast Invoice #${reference}`
+              : paymentContext === "ORDER" ? `Payfast Order #${reference}`
+              : `Payfast Pre-Order Txn #${transactionNumber}`,
             createdBy: "payfast-webhook",
-          }).then(r => r.data);
+            transactionNumber,                          // for idempotency
+            paymentContext,
+            referenceRaw: reference,
+            ...(paymentContext === "ORDER"   ? { orderNumber: reference }   : {}),
+            ...(paymentContext === "INVOICE" ? { invoiceNumber: reference } : {}),
+            ...(paymentContext === "ORDER" || paymentContext === "PREORDER"
+                ? { creditApplied: baseAmount }         // 👈 FULLY allocate now
+                : {}),
+          };
 
-          settleResult = { skipped: true, reason: "Invoice not yet created" };
-        } else {
-          console.warn(`⚠️ Neither invoice nor order found for ${m_payment_id}`);
-          updatedType = "notfound";
+          captureResult = await axios.post(url, payload, { timeout: 15000 }).then(r => r.data);
+        } catch (err) {
+          console.error("❌ capturePayment error:", err?.response?.status, err?.response?.data || err.message);
+          captureResult = { error: err.message, status: err?.response?.status, data: err?.response?.data };
+        }
+      } else {
+        captureResult = { skipped: true, reason: "payment already exists for this transactionNumber" };
+      }
+
+      // ---- context-specific processing ----
+      if (paymentContext === "INVOICE" && reference) {
+        // For invoices: allocate now via settleInvoice
+        try {
+          const settleUrl = `${process.env.BASE_URL}/api/accounting/payments/settleInvoice`;
+          settleResult = await axios.post(settleUrl, { orderNumber: reference }, { timeout: 15000 }).then(r => r.data);
+        } catch (err) {
+          console.error("❌ settleInvoice error:", err?.response?.status, err?.response?.data || err.message);
+          settleResult = { error: err.message, status: err?.response?.status, data: err?.response?.data };
+        }
+      } else if (paymentContext === "ORDER" && reference) {
+        // Mark order prepaid (idempotent). We DO NOT call settleInvoice here.
+        try {
+          const orderRef = doc(db, "orders", reference);
+          const orderSnap = await getDoc(orderRef);
+          if (orderSnap.exists()) {
+            const wasPrepaid = !!orderSnap.data()?.prePaid;
+            if (!wasPrepaid) {
+              await updateDoc(orderRef, { prePaid: true });
+              orderUpdateResult = { ok: true, prePaid: true };
+            } else {
+              orderUpdateResult = { ok: true, prePaid: true, idempotent: true };
+            }
+          } else {
+            orderUpdateResult = { skipped: true, reason: "Order not found" };
+          }
+        } catch (err) {
+          console.error("❌ order update error:", err.message);
+          orderUpdateResult = { error: err.message };
         }
       }
-
-      // ✉️ Customer email
-      try {
-        const custMsg =
-          updatedType === "invoice"
-            ? `<p>Your payment of R${capturedAmount.toFixed(2)} for <strong>Invoice #${m_payment_id}</strong> was successful. Thank you!</p>`
-            : updatedType === "order"
-              ? `<p>Your payment of R${capturedAmount.toFixed(2)} for <strong>Order #${m_payment_id}</strong> was successful.<br/>This order has been marked as prepaid. The final invoice will be issued once your delivery is completed.</p>`
-              : `<p>We received a payment for reference #${m_payment_id}, but could not match it to an invoice or order. Please contact support.</p>`;
-
-        const custRes = await axios.post(`${process.env.BASE_URL}/api/sendEmail`, {
-          to: email_address,
-          subject:
-            updatedType === "invoice"
-              ? `Payment Successful for Invoice #${m_payment_id}`
-              : updatedType === "order"
-                ? `Payment Successful for Order #${m_payment_id}`
-                : `Payment Received — Reference #${m_payment_id}`,
-          data: { message: custMsg },
-        });
-        customerEmailResult = custRes.data;
-        console.log("📨 Customer email sent:", customerEmailResult);
-      } catch (err) {
-        console.error("❌ Customer email error:", err.message);
-        customerEmailResult = { error: err.message };
-      }
-
-      // ✉️ Internal email
-      try {
-        const intMsg =
-          updatedType === "invoice"
-            ? `<p>Invoice #${m_payment_id} has been settled.</p>
-               <p><strong>Gross Paid:</strong> R${amount_gross}<br/>
-                  <strong>Allocated Amount:</strong> R${capturedAmount.toFixed(2)}<br/>
-                  ${fee ? `<strong>PayFast Fee:</strong> R${fee}</p>` : ""}`
-            : updatedType === "order"
-              ? `<p>Order #${m_payment_id} has been marked <strong>prepaid</strong>.</p>
-                 <p><strong>Gross Paid:</strong> R${amount_gross}<br/>
-                    <strong>Allocated Amount:</strong> R${capturedAmount.toFixed(2)}<br/>
-                    ${fee ? `<strong>PayFast Fee:</strong> R${fee}</p>` : ""}`
-              : `<p>Payment received for reference #${m_payment_id}, but no matching invoice/order found.</p>
-                 <p><strong>Gross Paid:</strong> R${amount_gross}<br/>
-                    <strong>Allocated Amount:</strong> ${capturedAmount ? "R" + capturedAmount.toFixed(2) : "N/A"}<br/>
-                    ${fee ? `<strong>PayFast Fee:</strong> R${fee}</p>` : ""}`;
-
-        const intRes = await axios.post(`${process.env.BASE_URL}/api/sendEmail`, {
-          to: "info@bevgo.co.za",
-          subject: `Customer Payment Successful`,
-          data: { message: intMsg },
-        });
-        internalEmailResult = intRes.data;
-        console.log("📨 Internal email sent:", internalEmailResult);
-      } catch (err) {
-        console.error("❌ Internal email error:", err.message);
-        internalEmailResult = { error: err.message };
-      }
-
-      // 🧾 Log PayFast transaction
-      await logAccountingAction({
-        action: "PAYFAST_PAYMENT",
-        orderNumber: m_payment_id,
-        companyCode: custom_str1 || "UNKNOWN",
-        grossPaid: Number(amount_gross),
-        allocatedAmount: capturedAmount,
-        fee: fee ? Number(fee) : 0,
-        paymentMethod: "Payfast",
-        performedBy: "payfast-webhook",
-        type: updatedType,
-      });
-    } else {
-      console.log(`⚠️ Payment ${payment_status} for ${m_payment_id}`);
+      // PREORDER: nothing else (payment already fully allocated in capturePayment)
     }
+
+    /* 3) Customer email (optional) */
+    try {
+      const ok = payment_status === "COMPLETE";
+      const subject = ok
+        ? (paymentContext === "INVOICE"
+            ? `Payment Successful — Invoice #${reference}`
+            : paymentContext === "ORDER"
+              ? `Payment Successful — Order #${reference}`
+              : `Payment Successful — Transaction #${transactionNumber}`)
+        : `Payment ${payment_status} — ${
+            paymentContext === "PREORDER" ? `Transaction #${transactionNumber}` : `Reference #${reference || m_payment_id}`
+          }`;
+
+      const amountText = baseAmount != null ? `R${baseAmount.toFixed(2)}` : "your payment";
+      const body = ok
+        ? (paymentContext === "INVOICE"
+            ? `<p>Your payment of ${amountText} for <strong>Invoice #${reference}</strong> was successful. Thank you!</p>`
+            : paymentContext === "ORDER"
+              ? `<p>Your payment of ${amountText} for <strong>Order #${reference}</strong> was successful. Thank you!</p>`
+              : `<p>Your payment of ${amountText} for <strong>Transaction #${transactionNumber}</strong> was successful. Thank you!</p>`)
+        : `<p>Your payment status is <strong>${payment_status}</strong> for ${
+            paymentContext === "PREORDER"
+              ? `Transaction <strong>#${transactionNumber}</strong>`
+              : `Reference <strong>#${reference || m_payment_id}</strong>`
+          }.</p>`;
+
+      if (email_address) {
+        await axios.post(`${process.env.BASE_URL}/api/sendEmail`, {
+          to: email_address,
+          subject,
+          data: { message: body },
+        });
+      }
+    } catch (err) {
+      console.error("❌ Customer email error:", err.message);
+    }
+
+    /* 4) Log everything */
+    await logAccountingAction({
+      action: "PAYFAST_IPN",
+      payment_status,
+      paymentContext,
+      reference,
+      transactionNumber,
+      companyCode,
+      grossPaid: Number(amount_gross || 0),
+      baseAmount: baseAmount != null ? baseAmount : null,
+      captureResult,
+      settleResult,
+      orderUpdateResult,
+      txnStatusUpdate,
+      performedBy: "payfast-webhook",
+    });
 
     return NextResponse.json(
       {
         message: "Webhook processed",
         payment_status,
-        orderNumber: m_payment_id,
-        updatedType,
+        paymentContext,
+        reference,
+        transactionNumber,
         captureResult,
         settleResult,
-        customerEmailResult,
-        internalEmailResult,
+        orderUpdateResult,
+        txnStatusUpdate,
       },
       { status: 200 }
     );
   } catch (error) {
     console.error("❌ Webhook error:", error.message);
-    return NextResponse.json(
-      { error: "Webhook processing failed", details: error.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Webhook processing failed", details: error.message }, { status: 500 });
   }
 }

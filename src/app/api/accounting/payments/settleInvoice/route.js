@@ -14,6 +14,7 @@ import {
   getDoc,
 } from "firebase/firestore";
 import { NextResponse } from "next/server";
+import axios from "axios";
 
 // 🔹 Utility: calculate available credit (ignores deleted)
 async function getAvailableCredit(companyCode) {
@@ -50,27 +51,78 @@ async function logAccountingAction(action) {
   }
 }
 
+/* ----------------------------- Email helpers ----------------------------- */
+
+const INTERNAL_TO = ["info@bevgo.co.za"]; // always notify this address
+
+const fmtR = (n) =>
+  `R${(Number(n || 0)).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
+
+async function sendEmail({ to, subject, html }) {
+  try {
+    await axios.post(`${process.env.BASE_URL}/api/sendEmail`, {
+      to,
+      subject,
+      data: { message: html }, // /api/sendEmail expects { data: { message } }
+    });
+    return { ok: true };
+  } catch (err) {
+    console.error("❌ sendEmail error:", err?.response?.status, err?.response?.data || err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+// Resolve customer name/email from invoice, falling back to your client API
+async function resolveCustomerContact(inv, companyCode) {
+  let name =
+    inv?.customer?.companyName ||
+    inv?.customer?.name ||
+    null;
+  let email =
+    inv?.customer?.email ||
+    null;
+
+  if (!name || !email) {
+    try {
+      const res = await axios.post(
+        `https://bevgo-client.vercel.app/api/getUser`,
+        { companyCode },
+        { timeout: 10000 }
+      );
+      if (res.status === 200 && res.data?.data) {
+        name = name || res.data.data.companyName || null;
+        email = email || res.data.data.email || null;
+      }
+    } catch (e) {
+      console.warn("⚠️ getUser fallback failed:", e.message);
+    }
+  }
+  return { companyName: name || "Customer", email: email || null };
+}
+
+/* --------------------------------- POST --------------------------------- */
 /**
  * POST - Settle Invoice(s)
  *
  * Modes:
  * 1. Direct Invoice Settlement
  *    → Pass { orderNumber: "123" } OR { orderNumbers: ["123", "456"] }
- *    → Settles explicitly listed invoices if enough credit.
  *
  * 2. Auto Settle Specific Customer
  *    → Pass { companyCode: "DC2070", autoSettle: true }
- *    → Checks available credit & settles invoices (FIFO) for that customer only.
  *
  * 3. Admin Multi-Customer Auto Settle
  *    → Pass { autoSettle: true, isAdmin: true }
- *    → Runs across ALL customers, settling what can be settled (FIFO per customer).
+ *
+ * Emails:
+ * - Always emails the customer for any invoices settled in this request
+ * - Always emails an internal digest to info@bevgo.co.za
  */
 export async function POST(req) {
   try {
     const {
-      orderNumber,   // 👈 NEW support for single invoice
-      orderNumbers,  // 👈 existing support for multiple
+      orderNumber,   // 👈 single invoice
+      orderNumbers,  // 👈 multiple invoices
       companyCode,
       autoSettle = false,
       isAdmin = false,
@@ -78,55 +130,99 @@ export async function POST(req) {
 
     const results = [];
 
-    // Helper: process a single invoice settlement
+    // For email batching per company: companyCode -> { companyName, customerEmail, entries: [] }
+    const settledByCompany = new Map();
+
+    // 🧮 Helper: process a single invoice (keeps your original logic)
     const processInvoice = async (invoiceDoc) => {
       const invoice = invoiceDoc.data();
-      const companyCode = invoice?.customer?.companyCode;
-      if (!companyCode) return { error: "Invoice missing companyCode" };
+      const cc = invoice?.customer?.companyCode;
+      if (!cc) return { error: "Invoice missing companyCode" };
 
       const invoiceTotal = Number(invoice.finalTotals?.finalTotal || 0);
+      const isRental = invoice?.type === "Rental";
 
-      // 🔎 Check linked order
+      // 🔎 Check linked order (if it exists)
       const orderRef = doc(db, "orders", invoice.orderNumber);
       const orderSnap = await getDoc(orderRef);
+      const orderExists = orderSnap.exists();
 
-      if (orderSnap.exists()) {
+      let orderTotal = 0;
+      let isPrePaidOrder = false;
+
+      if (orderExists) {
         const order = orderSnap.data();
-        const orderTotal = Number(order?.order_details?.total || 0);
+        orderTotal = Number(order?.order_details?.total || 0);
+        isPrePaidOrder = order.prePaid === true || orderTotal === 0;
+      }
 
-        if (order.prePaid === true || orderTotal === 0) {
-          // ✅ Mark invoice + order as Paid without allocations
-          const now = new Date().toISOString();
-          await updateDoc(doc(db, "invoices", invoice.orderNumber), {
-            payment_status: "Paid",
-            date_settled: now,
-            allocationId: null, // no allocation doc
-          });
+      // ✅ If prepaid OR total = 0 → settle directly, no allocation
+      if (isPrePaidOrder || invoiceTotal === 0) {
+        const now = new Date().toISOString();
+
+        await updateDoc(doc(db, "invoices", invoice.orderNumber), {
+          payment_status: "Paid",
+          date_settled: now,
+          allocationId: null,
+        });
+
+        if (orderExists) {
           await updateDoc(orderRef, {
             payment_status: "Paid",
             date_settled: now,
             allocationId: null,
           });
-
-          await logAccountingAction({
-            action: "SETTLE_INVOICE",
-            companyCode,
-            orderNumber: invoice.orderNumber,
-            amount: invoiceTotal,
-            performedBy: "system",
-            details: { skippedAllocation: true },
-          });
-
-          return {
-            orderNumber: invoice.orderNumber,
-            message: "Invoice settled (prepaid/credit). No allocation doc created.",
-            skippedAllocation: true,
-          };
+        } else {
+          console.log(
+            `⚠️ No order doc found for invoice ${invoice.orderNumber} (type: ${
+              isRental ? "Rental" : "Standard"
+            }). Skipping order update.`
+          );
         }
+
+        await logAccountingAction({
+          action: "SETTLE_INVOICE",
+          companyCode: cc,
+          orderNumber: invoice.orderNumber,
+          type: isRental ? "Rental" : "Standard",
+          amount: invoiceTotal,
+          performedBy: "system",
+          details: {
+            skippedAllocation: true,
+            orderExists,
+            prePaid: isPrePaidOrder,
+          },
+        });
+
+        // collect for email
+        const { companyName, email } = await resolveCustomerContact(invoice, cc);
+        if (!settledByCompany.has(cc)) {
+          settledByCompany.set(cc, {
+            companyName,
+            customerEmail: email,
+            entries: [],
+          });
+        }
+        settledByCompany.get(cc).entries.push({
+          orderNumber: invoice.orderNumber,
+          amount: invoiceTotal,
+          type: isRental ? "Rental" : "Standard",
+          skippedAllocation: true,
+          allocationId: null,
+        });
+
+        return {
+          orderNumber: invoice.orderNumber,
+          type: isRental ? "Rental" : "Standard",
+          message: orderExists
+            ? "Invoice settled (prepaid/credit)."
+            : "Invoice settled (auto-generated, no order doc).",
+          skippedAllocation: true,
+        };
       }
 
-      // 🔎 Otherwise continue with normal allocation flow
-      const creditSummary = await getAvailableCredit(companyCode);
+      // 🔹 Continue with normal allocation flow
+      const creditSummary = await getAvailableCredit(cc);
       if (creditSummary.availableCredit < invoiceTotal) {
         return {
           orderNumber: invoice.orderNumber,
@@ -138,7 +234,7 @@ export async function POST(req) {
       // Fetch unallocated payments (FIFO)
       const paymentsRef = collection(db, "payments");
       const paymentsSnap = await getDocs(
-        query(paymentsRef, where("companyCode", "==", companyCode))
+        query(paymentsRef, where("companyCode", "==", cc))
       );
 
       let remaining = invoiceTotal;
@@ -172,12 +268,53 @@ export async function POST(req) {
         };
       }
 
+      // 🧩 Prevent duplicate payment–invoice pairs
+      const existingAllocSnap = await getDocs(
+        query(collection(db, "allocations"), where("invoiceId", "==", invoice.orderNumber))
+      );
+
+      let usedPaymentIds = [];
+      existingAllocSnap.forEach((aDoc) => {
+        const alloc = aDoc.data();
+        const ids = (alloc.fromPayments || []).map((p) => p.paymentId);
+        usedPaymentIds.push(...ids);
+      });
+
+      const filteredFromPayments = fromPayments.filter(
+        (fp) => !usedPaymentIds.includes(fp.paymentId)
+      );
+
+      if (filteredFromPayments.length === 0) {
+        console.log(
+          `⚠️ All payments already linked to invoice ${invoice.orderNumber}. Skipping allocation creation.`
+        );
+
+        await logAccountingAction({
+          action: "SETTLE_INVOICE_SKIPPED_DUPLICATE_LINKS",
+          companyCode: cc,
+          orderNumber: invoice.orderNumber,
+          performedBy: "system",
+          details: { existingAllocations: existingAllocSnap.size },
+        });
+
+        return {
+          orderNumber: invoice.orderNumber,
+          message: "Skipped — all payment links already exist.",
+          skipped: true,
+        };
+      }
+
+      const totalNewAmount = filteredFromPayments.reduce(
+        (sum, fp) => sum + fp.amount,
+        0
+      );
+
       // Create allocation doc
       const allocationRef = await addDoc(collection(db, "allocations"), {
-        companyCode,
+        companyCode: cc,
         invoiceId: invoice.orderNumber,
-        amount: invoiceTotal,
-        fromPayments,
+        amount: totalNewAmount,
+        fromPayments: filteredFromPayments,
         date: new Date().toISOString(),
         createdBy: "system",
       });
@@ -190,38 +327,71 @@ export async function POST(req) {
         date_settled: now,
         allocationId: allocationRef.id,
       });
-      batch.update(orderRef, {
-        payment_status: "Paid",
-        date_settled: now,
-        allocationId: allocationRef.id,
-      });
+
+      // 🧾 Update order only if it exists
+      if (orderExists) {
+        batch.update(orderRef, {
+          payment_status: "Paid",
+          date_settled: now,
+          allocationId: allocationRef.id,
+        });
+      } else {
+        console.log(
+          `⚠️ No order doc found for invoice ${invoice.orderNumber} (type: ${
+            isRental ? "Rental" : "Standard"
+          }). Skipping order update.`
+        );
+      }
 
       await batch.commit();
 
       await logAccountingAction({
         action: "SETTLE_INVOICE",
-        companyCode,
+        companyCode: cc,
         orderNumber: invoice.orderNumber,
-        amount: invoiceTotal,
+        type: isRental ? "Rental" : "Standard",
+        amount: totalNewAmount,
         performedBy: "system",
-        details: { fromPayments, allocationId: allocationRef.id },
+        details: {
+          fromPayments: filteredFromPayments,
+          allocationId: allocationRef.id,
+          orderExists,
+        },
       });
 
-      const updatedCredit = await getAvailableCredit(companyCode);
+      // collect for email
+      const { companyName, email } = await resolveCustomerContact(invoice, cc);
+      if (!settledByCompany.has(cc)) {
+        settledByCompany.set(cc, {
+          companyName,
+          customerEmail: email,
+          entries: [],
+        });
+      }
+      settledByCompany.get(cc).entries.push({
+        orderNumber: invoice.orderNumber,
+        amount: totalNewAmount,
+        type: isRental ? "Rental" : "Standard",
+        skippedAllocation: false,
+        allocationId: allocationRef.id,
+      });
+
+      const updatedCredit = await getAvailableCredit(cc);
       return {
         message: `Invoice ${invoice.orderNumber} settled successfully`,
+        type: isRental ? "Rental" : "Standard",
         allocationId: allocationRef.id,
-        fromPayments,
+        fromPayments: filteredFromPayments,
         creditSummary: updatedCredit,
       };
     };
 
-    // Mode 1: Explicit orderNumber(s)
+    // 🔹 Mode 1: Specific invoice(s)
     if (
       (orderNumbers && Array.isArray(orderNumbers) && orderNumbers.length > 0) ||
       orderNumber
     ) {
-      const numbers = orderNumbers || [orderNumber]; // normalize to array
+      const numbers = orderNumbers || [orderNumber];
       for (const num of numbers) {
         const snap = await getDocs(
           query(collection(db, "invoices"), where("orderNumber", "==", num))
@@ -234,7 +404,7 @@ export async function POST(req) {
       }
     }
 
-    // Mode 2: Auto settle for specific customer
+    // 🔹 Mode 2: Auto settle for a specific customer
     else if (autoSettle && companyCode) {
       const snap = await getDocs(
         query(
@@ -248,7 +418,7 @@ export async function POST(req) {
       }
     }
 
-    // Mode 3: Admin auto settle all customers
+    // 🔹 Mode 3: Admin global auto-settle
     else if (autoSettle && isAdmin) {
       const snap = await getDocs(
         query(collection(db, "invoices"), where("payment_status", "==", "Pending"))
@@ -258,18 +428,112 @@ export async function POST(req) {
       }
     }
 
+    // ❌ Invalid request
     else {
       return NextResponse.json(
-        { error: "Invalid request. Provide orderNumber/orderNumbers, or autoSettle with companyCode/isAdmin." },
+        {
+          error:
+            "Invalid request. Provide orderNumber/orderNumbers, or autoSettle with companyCode/isAdmin.",
+        },
         { status: 400 }
       );
     }
 
+    /* ----------------------------- Email sends ----------------------------- */
+
+    // Customer emails — one per company with ≥1 settled invoice(s)
+    for (const [cc, group] of settledByCompany.entries()) {
+      const { companyName, customerEmail, entries } = group;
+      if (!entries || entries.length === 0) continue;
+
+      const total = entries.reduce((s, e) => s + Number(e.amount || 0), 0);
+      const rows = entries.map(e => `
+        <tr>
+          <td style="padding:6px 8px;border-bottom:1px solid #eee;">#${e.orderNumber}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #eee;">${e.type}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #eee;">${fmtR(e.amount)}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #eee;">${e.skippedAllocation ? "Prepaid/Zero" : e.allocationId}</td>
+        </tr>
+      `).join("");
+
+      // Send to customer if we have an email on record
+      if (customerEmail) {
+        const subject =
+          entries.length === 1
+            ? `Payment received — Invoice #${entries[0].orderNumber} settled`
+            : `Payment received — ${entries.length} invoices settled`;
+
+        const html = `
+          <div style="font-family:Inter,Arial,sans-serif;max-width:560px;margin:0 auto;">
+            <p>Hi ${companyName || "there"},</p>
+            <p>Thank you — we’ve recorded your payment and settled the following invoice${entries.length>1?"s":""}:</p>
+            <table style="border-collapse:collapse;width:100%;font-size:14px;">
+              <thead>
+                <tr>
+                  <th align="left" style="padding:6px 8px;border-bottom:1px solid #ccc;">Invoice</th>
+                  <th align="left" style="padding:6px 8px;border-bottom:1px solid #ccc;">Type</th>
+                  <th align="left" style="padding:6px 8px;border-bottom:1px solid #ccc;">Amount</th>
+                  <th align="left" style="padding:6px 8px;border-bottom:1px solid #ccc;">Allocation</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+            <p style="margin-top:12px;">Total settled: <strong>${fmtR(total)}</strong></p>
+            <p>If anything looks off, just reply to this email and we’ll help.</p>
+            <p>— Bevgo Accounts</p>
+          </div>
+        `;
+        await sendEmail({ to: customerEmail, subject, html });
+      }
+    }
+
+    // Internal digest — ALWAYS send to info@bevgo.co.za
+    const blocks = [];
+    for (const [cc, group] of settledByCompany.entries()) {
+      const { companyName, entries } = group;
+      if (!entries || entries.length === 0) continue;
+      const total = entries.reduce((s, e) => s + Number(e.amount || 0), 0);
+      const list = entries
+        .map(
+          (e) =>
+            `#${e.orderNumber} (${e.type}) — ${fmtR(e.amount)} — ${
+              e.skippedAllocation ? "Prepaid/Zero" : `Alloc: ${e.allocationId}`
+            }`
+        )
+        .join("<br/>");
+
+      blocks.push(
+        `<div style="margin-bottom:16px;">
+           <div style="font-weight:600;">${companyName || cc} (${cc})</div>
+           <div>${list}</div>
+           <div style="margin-top:6px;">Subtotal: <strong>${fmtR(total)}</strong></div>
+         </div>`
+      );
+    }
+
+    if (blocks.length > 0) {
+      const subject = "Invoice settlement — invoices marked Paid";
+      const html = `
+        <div style="font-family:Inter,Arial,sans-serif;max-width:640px;margin:0 auto;">
+          <p>These invoices were settled:</p>
+          ${blocks.join("")}
+          <p style="margin-top:8px;color:#666;font-size:12px;">(Source: settleInvoice)</p>
+        </div>
+      `;
+      for (const to of INTERNAL_TO) {
+        await sendEmail({ to, subject, html });
+      }
+    }
+
+    // ✅ Final response
     return NextResponse.json({
       message: "Settlement process complete",
       results,
+      emailedCompanies: Array.from(settledByCompany.keys()),
+      internalNotified: true,
     });
   } catch (err) {
+    console.error("❌ Settlement failed:", err);
     return NextResponse.json(
       { error: err.message || "Failed to settle invoices" },
       { status: 500 }

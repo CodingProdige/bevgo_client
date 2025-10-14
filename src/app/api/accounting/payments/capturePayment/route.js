@@ -64,9 +64,8 @@ async function generateUniquePaymentNumber() {
   return paymentNumber;
 }
 
-/**
- * POST - Create new payment
- */
+/* -------------------------------- POST -------------------------------- */
+
 export async function POST(req) {
   try {
     const body = await req.json();
@@ -79,8 +78,12 @@ export async function POST(req) {
       paymentDate,
       grossPaid,
       fee,
-      creditApplied,    // optional immediate allocation
-      orderNumber       // optional (for credit allocations)
+      creditApplied,          // optional immediate allocation (webhook sets this for ORDER/PREORDER)
+      orderNumber,            // optional link to order
+      transactionNumber,      // for idempotency from webhook
+      paymentContext,         // optional: ORDER | PREORDER | INVOICE (audit)
+      invoiceNumber,          // optional: link to invoice
+      referenceRaw            // optional: raw reference value from webhook
     } = body;
 
     if (!companyCode || amount === undefined || !method) {
@@ -90,10 +93,24 @@ export async function POST(req) {
       );
     }
 
-    // 🔹 Edge case: negative final total → treat as credit (invert amount, force method = "Credit")
+    // ✅ Idempotency guard on transactionNumber
+    if (transactionNumber) {
+      const existing = await getDocs(
+        query(collection(db, "payments"), where("transactionNumber", "==", String(transactionNumber)))
+      );
+      if (!existing.empty) {
+        return NextResponse.json({
+          message: "Payment already captured for this transactionNumber",
+          paymentId: existing.docs[0].id,
+          status: "DuplicateSkipped"
+        }, { status: 200 });
+      }
+    }
+
+    // Negative amount → treat as Credit (unchanged)
     if (amount < 0) {
       amount = Math.abs(amount);
-      method = "Credit"; // 👈 introduce a "Credit" method type for returnable overpayment
+      method = "Credit";
       reference = reference || `Returnables Credit for Order #${orderNumber || "N/A"}`;
     }
 
@@ -105,9 +122,9 @@ export async function POST(req) {
       );
     }
 
-    // Default references if not already set
+    // Default reference
     let finalReference = reference;
-    if (!reference) {
+    if (!finalReference) {
       if (method === "EFT") finalReference = "EFT Payment";
       if (method === "Card") finalReference = "Card Payment";
       if (method === "Cash") finalReference = "Cash Payment";
@@ -118,7 +135,7 @@ export async function POST(req) {
     const now = new Date().toISOString();
     const paymentNumber = await generateUniquePaymentNumber();
 
-    // 👇 Ensure appliedCredit never exceeds amount
+    // Ensure appliedCredit never exceeds amount
     const appliedCredit = creditApplied
       ? Math.min(Number(creditApplied), Number(amount))
       : 0;
@@ -138,6 +155,7 @@ export async function POST(req) {
       creditAllocations: appliedCredit > 0 ? [
         {
           orderNumber: orderNumber || null,
+          invoiceNumber: invoiceNumber || null,
           amount: appliedCredit,
           date: now,
           createdBy: createdBy || "system"
@@ -145,7 +163,13 @@ export async function POST(req) {
       ] : [],
       createdAt: now,
       date: now,
-      deleted: false
+      deleted: false,
+      // 🔎 new fields for audit/idempotency
+      transactionNumber: transactionNumber ? String(transactionNumber) : null,
+      payfastContext: paymentContext || null,
+      referenceRaw: referenceRaw || null,
+      orderNumber: orderNumber || null,
+      invoiceNumber: invoiceNumber || null,
     };
 
     const paymentsRef = collection(db, "payments");
@@ -170,6 +194,7 @@ export async function POST(req) {
     );
   }
 }
+
 
 
 

@@ -5,7 +5,7 @@ import { db } from "@/lib/firebaseConfig";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
-// Utility: calculate available credit for a single customer
+// 🧮 Utility: calculate available credit
 async function getAvailableCredit(companyCode) {
   const paymentsRef = collection(db, "payments");
   const q = query(paymentsRef, where("companyCode", "==", companyCode));
@@ -24,13 +24,43 @@ async function getAvailableCredit(companyCode) {
   return totalCredit - totalAllocated;
 }
 
+// 👤 Utility: fetch user/customer details
+async function getCustomerDetails(companyCode) {
+  let detailDoc = null;
+
+  // Try users collection
+  const usersQuery = query(collection(db, "users"), where("companyCode", "==", companyCode));
+  const usersSnap = await getDocs(usersQuery);
+  if (!usersSnap.empty) {
+    detailDoc = usersSnap.docs[0].data();
+  } else {
+    // Fallback: customers collection
+    const custQuery = query(collection(db, "customers"), where("companyCode", "==", companyCode));
+    const custSnap = await getDocs(custQuery);
+    if (!custSnap.empty) {
+      detailDoc = custSnap.docs[0].data();
+    }
+  }
+
+  if (!detailDoc) return null;
+
+  // Clean relevant fields (adjust these to your schema)
+  return {
+    companyName: detailDoc.companyName || null,
+    email: detailDoc.email || null,
+    phone: detailDoc.phone_number || null,
+    address: detailDoc.deliveryAddress || null,
+    postalCode: detailDoc.postal_code || null,
+    vatNumber: detailDoc.vatNumber || null
+  };
+}
+
 export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url);
     const companyCode = searchParams.get("companyCode");
     const isAdmin = searchParams.get("isAdmin") === "true";
 
-    // 🔹 Enforce rules
     if (!isAdmin && !companyCode) {
       return NextResponse.json(
         { error: "companyCode is required when isAdmin=false" },
@@ -38,7 +68,7 @@ export async function GET(req) {
       );
     }
 
-    // Helper: fetch invoices
+    // Helper: fetch pending invoices for company
     const fetchInvoices = async (cc) => {
       const invoicesRef = collection(db, "invoices");
       const q = query(
@@ -53,7 +83,7 @@ export async function GET(req) {
     let customers = [];
 
     if (isAdmin) {
-      // Get all distinct customers with pending invoices
+      // Get all pending invoices grouped by companyCode
       const invoicesRef = collection(db, "invoices");
       const snap = await getDocs(query(invoicesRef, where("payment_status", "==", "Pending")));
       const grouped = {};
@@ -66,27 +96,31 @@ export async function GET(req) {
         grouped[cc].push({ id: docSnap.id, ...inv });
       });
 
-      // For each customer → calculate credit and filter invoices
+      // Build enriched customer list
       for (const cc of Object.keys(grouped)) {
         const availableCredit = await getAvailableCredit(cc);
         const invoices = grouped[cc].filter(
           (inv) => Number(inv.finalTotals?.finalTotal || 0) <= availableCredit
         );
+
         if (invoices.length > 0) {
+          const userDetails = await getCustomerDetails(cc);
+
           customers.push({
             companyCode: cc,
             availableCredit,
+            userDetails, // ✅ now enriched
             invoices: invoices.map((inv) => ({
               orderNumber: inv.orderNumber,
               invoiceDate: inv.invoiceDate,
               finalTotal: Number(inv.finalTotals?.finalTotal || 0),
-              payment_status: inv.payment_status
-            }))
+              payment_status: inv.payment_status,
+            })),
           });
         }
       }
     } else {
-      // Single customer
+      // Single customer view
       const availableCredit = await getAvailableCredit(companyCode);
       const invoices = await fetchInvoices(companyCode);
       const matchable = invoices.filter(
@@ -94,15 +128,18 @@ export async function GET(req) {
       );
 
       if (matchable.length > 0) {
+        const userDetails = await getCustomerDetails(companyCode);
+
         customers.push({
           companyCode,
           availableCredit,
+          userDetails, // ✅ enriched
           invoices: matchable.map((inv) => ({
             orderNumber: inv.orderNumber,
             invoiceDate: inv.invoiceDate,
             finalTotal: Number(inv.finalTotals?.finalTotal || 0),
-            payment_status: inv.payment_status
-          }))
+            payment_status: inv.payment_status,
+          })),
         });
       }
     }
@@ -110,9 +147,10 @@ export async function GET(req) {
     return NextResponse.json({
       message: "Settle candidates retrieved successfully",
       isAdmin,
-      customers
+      customers,
     });
   } catch (err) {
+    console.error("❌ Error fetching settle candidates:", err);
     return NextResponse.json(
       { error: err.message || "Failed to fetch settle candidates" },
       { status: 500 }

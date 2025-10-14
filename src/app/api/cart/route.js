@@ -19,55 +19,69 @@ export async function POST(req) {
     const userDocRef = doc(db, "users", userId);
     const userDocSnap = await getDoc(userDocRef);
     let cart = userDocSnap.exists() ? userDocSnap.data().cart || [] : [];
-    let productIndex = cart.findIndex(item => item.unique_code === unique_code);
     let updatedCart = [...cart];
-
     const batch = writeBatch(db);
 
+    // 🔍 Find product in existing cart
+    const productIndex = updatedCart.findIndex(item => item.unique_code === unique_code);
 
-    if (action === "add" || action === "edit") {
-      if (quantity === 0) {
-        if (productIndex !== -1) updatedCart.splice(productIndex, 1);
+    if (action === "add") {
+      if (productIndex !== -1) {
+        // ✅ Add only the new quantity to existing one from DB
+        updatedCart[productIndex].in_cart = Number(updatedCart[productIndex].in_cart || 0) + Number(quantity);
       } else {
-        if (productIndex !== -1) {
-          if (action === "edit") {
-            updatedCart[productIndex].in_cart = quantity;
-          } else {
-            updatedCart[productIndex].in_cart += quantity;
-          }
-        } else {
-          const response = await fetch(PRODUCTS_API_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ unique_code }),
-          });
+        // 🆕 Fetch product data from catalog
+        const response = await fetch(PRODUCTS_API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ unique_code }),
+        });
 
-          if (!response.ok) {
-            return NextResponse.json({ error: "Product not found" }, { status: 404 });
-          }
-
-          const { product } = await response.json();
-          product.in_cart = quantity;
-
-
-
-
-          updatedCart.push(product);
+        if (!response.ok) {
+          return NextResponse.json({ error: "Product not found" }, { status: 404 });
         }
+
+        const { product } = await response.json();
+        product.in_cart = Number(quantity);
+        updatedCart.push(product);
       }
-    } else if (action === "remove") {
+    }
+
+    else if (action === "edit") {
+      if (productIndex !== -1) {
+        // ✅ Replace quantity with exact number (not additive)
+        updatedCart[productIndex].in_cart = Number(quantity);
+      } else {
+        // If editing something not in cart, treat it as add
+        const response = await fetch(PRODUCTS_API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ unique_code }),
+        });
+
+        if (!response.ok) {
+          return NextResponse.json({ error: "Product not found" }, { status: 404 });
+        }
+
+        const { product } = await response.json();
+        product.in_cart = Number(quantity);
+        updatedCart.push(product);
+      }
+    }
+
+    else if (action === "remove") {
       if (productIndex !== -1) {
         updatedCart.splice(productIndex, 1);
       }
     }
 
-    // 🧹 Final cleanup: remove any products with in_cart === 0
+    // 🧹 Cleanup: remove any zero-quantity items
     updatedCart = updatedCart.filter(item => item.in_cart > 0);
 
     batch.update(userDocRef, { cart: updatedCart });
     await batch.commit();
 
-    const totalItems = updatedCart.reduce((acc, item) => acc + item.in_cart, 0);
+    const totalItems = updatedCart.reduce((acc, item) => acc + (Number(item.in_cart) || 0), 0);
 
     return NextResponse.json({ cart: updatedCart, totalItems }, { status: 200 });
 

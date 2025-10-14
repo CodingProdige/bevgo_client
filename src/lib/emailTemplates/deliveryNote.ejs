@@ -385,6 +385,10 @@
               <p>-R<%= rebateAmount %></p>
             </div>
             <div class="breakdown-row">
+              <p>Applied Credit:</p>
+              <p>-R<%= appliedCredit.toFixed(2) %></p>
+            </div>
+            <div class="breakdown-row">
               <p>Returnable Deposit (Excl. VAT):</p>
               <p>+R<%= returnableSubtotal %></p>
             </div>
@@ -394,6 +398,10 @@
             </div>
            
             <div class="final-total"></div>
+              <div class="breakdown-row">
+                <p>Delivery Fee:</p>
+                <p>+R<%= deliveryFee.toFixed(2) %></p>
+              </div>
               <div class="breakdown-row">
                 <p><strong>Total:</strong></p>
                 <p>R<%= total %></p>
