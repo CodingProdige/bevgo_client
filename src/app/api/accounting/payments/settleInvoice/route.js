@@ -16,26 +16,34 @@ import {
 import { NextResponse } from "next/server";
 import axios from "axios";
 
-// 🔹 Utility: calculate available credit (ignores deleted)
+/* ----------------------------- money helpers ----------------------------- */
+// 🔧 cents-safe
+const toCents = (n) => Math.round(Number(n || 0) * 100);
+const fromCents = (c) => Number((c / 100).toFixed(2));
+
+/* ------------------------------ credit utils ----------------------------- */
+
+// 🔹 Utility: calculate available credit (ignores deleted) — now cents-safe
 async function getAvailableCredit(companyCode) {
   const paymentsRef = collection(db, "payments");
-  const q = query(paymentsRef, where("companyCode", "==", companyCode));
-  const snap = await getDocs(q);
+  const qy = query(paymentsRef, where("companyCode", "==", companyCode));
+  const snap = await getDocs(qy);
 
-  let totalCredit = 0;
-  let totalAllocated = 0;
+  // 🔧 cents-safe
+  let totalCreditC = 0;
+  let totalAllocatedC = 0;
 
-  snap.forEach((doc) => {
-    const p = doc.data();
+  snap.forEach((d) => {
+    const p = d.data();
     if (p.deleted) return; // 🚫 skip deleted
-    totalCredit += Number(p.amount || 0);
-    totalAllocated += Number(p.allocated || 0);
+    totalCreditC += toCents(p.amount);
+    totalAllocatedC += toCents(p.allocated);
   });
 
   return {
-    totalCredit,
-    totalAllocated,
-    availableCredit: totalCredit - totalAllocated,
+    totalCredit: fromCents(totalCreditC),
+    totalAllocated: fromCents(totalAllocatedC),
+    availableCredit: fromCents(totalCreditC - totalAllocatedC),
   };
 }
 
@@ -139,7 +147,9 @@ export async function POST(req) {
       const cc = invoice?.customer?.companyCode;
       if (!cc) return { error: "Invoice missing companyCode" };
 
-      const invoiceTotal = Number(invoice.finalTotals?.finalTotal || 0);
+      // 🔧 cents-safe
+      const invoiceTotalC = toCents(invoice?.finalTotals?.finalTotal || 0);
+      const invoiceTotal = fromCents(invoiceTotalC);
       const isRental = invoice?.type === "Rental";
 
       // 🔎 Check linked order (if it exists)
@@ -157,7 +167,7 @@ export async function POST(req) {
       }
 
       // ✅ If prepaid OR total = 0 → settle directly, no allocation
-      if (isPrePaidOrder || invoiceTotal === 0) {
+      if (isPrePaidOrder || invoiceTotalC === 0) {
         const now = new Date().toISOString();
 
         await updateDoc(doc(db, "invoices", invoice.orderNumber), {
@@ -185,7 +195,7 @@ export async function POST(req) {
           companyCode: cc,
           orderNumber: invoice.orderNumber,
           type: isRental ? "Rental" : "Standard",
-          amount: invoiceTotal,
+          amount: invoiceTotal, // 🔧 use 2dp number
           performedBy: "system",
           details: {
             skippedAllocation: true,
@@ -205,7 +215,7 @@ export async function POST(req) {
         }
         settledByCompany.get(cc).entries.push({
           orderNumber: invoice.orderNumber,
-          amount: invoiceTotal,
+          amount: invoiceTotal, // 🔧 2dp
           type: isRental ? "Rental" : "Standard",
           skippedAllocation: true,
           allocationId: null,
@@ -223,7 +233,8 @@ export async function POST(req) {
 
       // 🔹 Continue with normal allocation flow
       const creditSummary = await getAvailableCredit(cc);
-      if (creditSummary.availableCredit < invoiceTotal) {
+      // 🔧 compare in cents
+      if (toCents(creditSummary.availableCredit) < invoiceTotalC) {
         return {
           orderNumber: invoice.orderNumber,
           error: "Insufficient credit",
@@ -237,30 +248,43 @@ export async function POST(req) {
         query(paymentsRef, where("companyCode", "==", cc))
       );
 
-      let remaining = invoiceTotal;
+      // 🔧 cents-safe running remainder
+      let remainingC = invoiceTotalC;
       const batch = writeBatch(db);
       const fromPayments = [];
 
       paymentsSnap.forEach((pDoc) => {
-        if (remaining <= 0) return;
+        if (remainingC <= 0) return;
         const p = pDoc.data();
         if (p.deleted) return;
 
-        const unallocated = Number(p.unallocated || 0);
-        if (unallocated > 0) {
-          const allocateAmt = Math.min(remaining, unallocated);
-          fromPayments.push({ paymentId: pDoc.id, amount: allocateAmt });
+        // Prefer explicit unallocated; fall back to amount - allocated (both to cents)
+        const unallocatedC = toCents(
+          p.unallocated != null ? p.unallocated : (Number(p.amount || 0) - Number(p.allocated || 0))
+        );
+        if (unallocatedC > 0) {
+          const allocateAmtC = Math.min(remainingC, unallocatedC);
 
-          batch.update(pDoc.ref, {
-            allocated: (p.allocated || 0) + allocateAmt,
-            unallocated: unallocated - allocateAmt,
+          // Keep allocation doc amounts as 2dp numbers (unchanged schema)
+          fromPayments.push({
+            paymentId: pDoc.id,
+            amount: fromCents(allocateAmtC), // 🔧 2dp number
           });
 
-          remaining -= allocateAmt;
+          // 🔧 write back allocated/unallocated as 2dp numbers
+          const newAllocated = fromCents(toCents(p.allocated) + allocateAmtC);
+          const newUnallocated = fromCents(unallocatedC - allocateAmtC);
+
+          batch.update(pDoc.ref, {
+            allocated: newAllocated,
+            unallocated: newUnallocated,
+          });
+
+          remainingC -= allocateAmtC;
         }
       });
 
-      if (remaining > 0) {
+      if (remainingC > 0) {
         return {
           orderNumber: invoice.orderNumber,
           error: "Allocation failed — not enough unallocated payments",
@@ -304,16 +328,17 @@ export async function POST(req) {
         };
       }
 
+      // Sum using regular numbers (already 2dp)
       const totalNewAmount = filteredFromPayments.reduce(
-        (sum, fp) => sum + fp.amount,
+        (sum, fp) => sum + Number(fp.amount || 0),
         0
       );
 
-      // Create allocation doc
+      // Create allocation doc (unchanged schema)
       const allocationRef = await addDoc(collection(db, "allocations"), {
         companyCode: cc,
         invoiceId: invoice.orderNumber,
-        amount: totalNewAmount,
+        amount: Number(totalNewAmount.toFixed(2)),
         fromPayments: filteredFromPayments,
         date: new Date().toISOString(),
         createdBy: "system",
@@ -350,7 +375,7 @@ export async function POST(req) {
         companyCode: cc,
         orderNumber: invoice.orderNumber,
         type: isRental ? "Rental" : "Standard",
-        amount: totalNewAmount,
+        amount: Number(totalNewAmount.toFixed(2)),
         performedBy: "system",
         details: {
           fromPayments: filteredFromPayments,
@@ -370,7 +395,7 @@ export async function POST(req) {
       }
       settledByCompany.get(cc).entries.push({
         orderNumber: invoice.orderNumber,
-        amount: totalNewAmount,
+        amount: Number(totalNewAmount.toFixed(2)),
         type: isRental ? "Rental" : "Standard",
         skippedAllocation: false,
         allocationId: allocationRef.id,
@@ -447,7 +472,7 @@ export async function POST(req) {
       if (!entries || entries.length === 0) continue;
 
       const total = entries.reduce((s, e) => s + Number(e.amount || 0), 0);
-      const rows = entries.map(e => `
+      const rows = entries.map((e) => `
         <tr>
           <td style="padding:6px 8px;border-bottom:1px solid #eee;">#${e.orderNumber}</td>
           <td style="padding:6px 8px;border-bottom:1px solid #eee;">${e.type}</td>

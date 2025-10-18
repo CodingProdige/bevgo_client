@@ -5,26 +5,34 @@ import { db } from "@/lib/firebaseConfig";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
-// 🧮 Utility: calculate available credit
+/* ----------------------------- money helpers ----------------------------- */
+// 🔧 cents-safe
+const toCents = (n) => Math.round(Number(n || 0) * 100);
+const fromCents = (c) => Number((c / 100).toFixed(2));
+
+/* ------------------------------ credit utils ----------------------------- */
+
+// 🧮 Utility: calculate available credit (ignores deleted) — cents-safe
 async function getAvailableCredit(companyCode) {
   const paymentsRef = collection(db, "payments");
   const q = query(paymentsRef, where("companyCode", "==", companyCode));
   const snap = await getDocs(q);
 
-  let totalCredit = 0;
-  let totalAllocated = 0;
+  let totalCreditC = 0;
+  let totalAllocatedC = 0;
 
-  snap.forEach((doc) => {
-    const p = doc.data();
+  snap.forEach((docSnap) => {
+    const p = docSnap.data();
     if (p.deleted) return;
-    totalCredit += Number(p.amount || 0);
-    totalAllocated += Number(p.allocated || 0);
+    totalCreditC    += toCents(p.amount);
+    totalAllocatedC += toCents(p.allocated);
   });
 
-  return totalCredit - totalAllocated;
+  // Return a 2dp number
+  return fromCents(totalCreditC - totalAllocatedC);
 }
 
-// 👤 Utility: fetch user/customer details
+// 👤 Utility: fetch user/customer details (unchanged)
 async function getCustomerDetails(companyCode) {
   let detailDoc = null;
 
@@ -44,7 +52,6 @@ async function getCustomerDetails(companyCode) {
 
   if (!detailDoc) return null;
 
-  // Clean relevant fields (adjust these to your schema)
   return {
     companyName: detailDoc.companyName || null,
     email: detailDoc.email || null,
@@ -68,7 +75,7 @@ export async function GET(req) {
       );
     }
 
-    // Helper: fetch pending invoices for company
+    // Helper: fetch pending invoices for company (unchanged)
     const fetchInvoices = async (cc) => {
       const invoicesRef = collection(db, "invoices");
       const q = query(
@@ -98,22 +105,25 @@ export async function GET(req) {
 
       // Build enriched customer list
       for (const cc of Object.keys(grouped)) {
-        const availableCredit = await getAvailableCredit(cc);
-        const invoices = grouped[cc].filter(
-          (inv) => Number(inv.finalTotals?.finalTotal || 0) <= availableCredit
-        );
+        const availableCredit = await getAvailableCredit(cc);          // 2dp number
+        const availableC = toCents(availableCredit);                    // 🔧 compare in cents
+
+        const invoices = grouped[cc].filter((inv) => {
+          const totalC = toCents(inv?.finalTotals?.finalTotal || 0);    // 🔧 convert to cents
+          return totalC <= availableC;
+        });
 
         if (invoices.length > 0) {
           const userDetails = await getCustomerDetails(cc);
 
           customers.push({
             companyCode: cc,
-            availableCredit,
-            userDetails, // ✅ now enriched
+            availableCredit, // 2dp number
+            userDetails,
             invoices: invoices.map((inv) => ({
               orderNumber: inv.orderNumber,
               invoiceDate: inv.invoiceDate,
-              finalTotal: Number(inv.finalTotals?.finalTotal || 0),
+              finalTotal: Number(inv.finalTotals?.finalTotal || 0), // leave as your 2dp number
               payment_status: inv.payment_status,
             })),
           });
@@ -121,19 +131,22 @@ export async function GET(req) {
       }
     } else {
       // Single customer view
-      const availableCredit = await getAvailableCredit(companyCode);
+      const availableCredit = await getAvailableCredit(companyCode);    // 2dp number
+      const availableC = toCents(availableCredit);                      // 🔧 compare in cents
+
       const invoices = await fetchInvoices(companyCode);
-      const matchable = invoices.filter(
-        (inv) => Number(inv.finalTotals?.finalTotal || 0) <= availableCredit
-      );
+      const matchable = invoices.filter((inv) => {
+        const totalC = toCents(inv?.finalTotals?.finalTotal || 0);      // 🔧 convert to cents
+        return totalC <= availableC;
+      });
 
       if (matchable.length > 0) {
         const userDetails = await getCustomerDetails(companyCode);
 
         customers.push({
           companyCode,
-          availableCredit,
-          userDetails, // ✅ enriched
+          availableCredit, // 2dp number
+          userDetails,
           invoices: matchable.map((inv) => ({
             orderNumber: inv.orderNumber,
             invoiceDate: inv.invoiceDate,
