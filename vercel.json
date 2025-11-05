@@ -1,18 +1,8 @@
 {
-    "crons": [
-      {
-        "path": "/api/overdueInvoices",
-        "schedule": "0 7 */3 * *"
-      },
-      {
-        "path": "/api/generateCylinderRentalInvoices",
-        "schedule": "0 6 1 * *"
-      },
-      {
-        "path": "/api/sendPendingInvoices",
-        "schedule": "*/15 * 1-5 * *"
-      }
-      
-    ]
-  }
-  
+  "crons": [
+    {
+      "path": "/api/overdueInvoices",
+      "schedule": "0 5 */3 * *"
+    }
+  ]
+}

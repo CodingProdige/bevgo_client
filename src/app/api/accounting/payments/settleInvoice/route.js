@@ -108,6 +108,20 @@ async function resolveCustomerContact(inv, companyCode) {
   return { companyName: name || "Customer", email: email || null };
 }
 
+// Local time for SA so humans reading it are happy
+const tz = "Africa/Johannesburg";
+function tsStamp() {
+  const parts = new Intl.DateTimeFormat("en-ZA", {
+    timeZone: tz,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false
+  }).formatToParts(new Date());
+  const get = (t) => parts.find(p => p.type === t)?.value || "";
+  // yyyy-mm-dd HH:MM:SS SAST
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")} SAST`;
+}
+
 /* --------------------------------- POST --------------------------------- */
 /**
  * POST - Settle Invoice(s)
@@ -128,13 +142,29 @@ async function resolveCustomerContact(inv, companyCode) {
  */
 export async function POST(req) {
   try {
-    const {
-      orderNumber,   // 👈 single invoice
-      orderNumbers,  // 👈 multiple invoices
-      companyCode,
-      autoSettle = false,
-      isAdmin = false,
-    } = await req.json();
+    const body = await req.json();
+
+    // ✅ Normalizer so "null"/"undefined"/""/whitespace become null
+    const clean = (v) => {
+      if (v == null) return null;
+      const s = String(v).trim();
+      if (!s) return null;
+      const lower = s.toLowerCase();
+      if (lower === "null" || lower === "undefined") return null;
+      return s;
+    };
+
+    const orderNumberRaw   = body.orderNumber;
+    const orderNumbersRaw  = body.orderNumbers;
+    const companyCodeRaw   = body.companyCode;
+
+    const orderNumber  = clean(orderNumberRaw);
+    const orderNumbers = Array.isArray(orderNumbersRaw)
+      ? orderNumbersRaw.map(clean).filter(Boolean)
+      : [];
+    const companyCode  = clean(companyCodeRaw);
+    const autoSettle   = !!body.autoSettle;
+    const isAdmin      = !!body.isAdmin;
 
     const results = [];
 
@@ -483,10 +513,11 @@ export async function POST(req) {
 
       // Send to customer if we have an email on record
       if (customerEmail) {
-        const subject =
-          entries.length === 1
-            ? `Payment received — Invoice #${entries[0].orderNumber} settled`
-            : `Payment received — ${entries.length} invoices settled`;
+        const subjectBase =
+        entries.length === 1
+          ? `Payment received — Invoice #${entries[0].orderNumber} settled`
+          : `Payment received — ${entries.length} invoices settled`;
+      const subject = `${subjectBase} — ${tsStamp()}`;
 
         const html = `
           <div style="font-family:Inter,Arial,sans-serif;max-width:560px;margin:0 auto;">
@@ -537,7 +568,8 @@ export async function POST(req) {
     }
 
     if (blocks.length > 0) {
-      const subject = "Invoice settlement — invoices marked Paid";
+      const subject = `Invoice settlement — invoices marked Paid — ${tsStamp()}`;
+
       const html = `
         <div style="font-family:Inter,Arial,sans-serif;max-width:640px;margin:0 auto;">
           <p>These invoices were settled:</p>
