@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+
+api/v1/notifications/push/serviceAccountKey.js
+serviceAccountKey.js
