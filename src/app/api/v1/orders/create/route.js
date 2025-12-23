@@ -8,6 +8,7 @@ import {
   runTransaction
 } from "firebase/firestore";
 import { db } from "@/lib/firebaseConfig";
+import crypto from "crypto";
 
 /* ───────────────── HELPERS ───────────────── */
 
@@ -36,38 +37,41 @@ export async function POST(req) {
     } = await req.json();
 
     if (!cartId || !customerId) {
-      return err(
-        400,
-        "Missing Parameters",
-        "cartId and customerId are required."
-      );
+      return err(400, "Missing Parameters", "cartId and customerId are required.");
     }
 
-    /* ───── Load Cart ───── */
+    /* ───── Load Cart from Catalogue Service ───── */
 
-    const cartRef = doc(db, "carts", cartId);
-    const cartSnap = await getDoc(cartRef);
+    const res = await fetch(
+      "https://bevgo-pricelist.vercel.app/api/catalogue/v1/carts/cart/fetchCart",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerId: cartId })
+      }
+    );
 
-    if (!cartSnap.exists()) {
-      return err(404, "Cart Not Found", "No cart found for this cartId.");
+    if (!res.ok) {
+      return err(502, "Cart Service Error", "Unable to fetch cart from catalogue service.");
     }
 
-    const cart = cartSnap.data();
+    const json = await res.json();
+    if (!json?.ok || !json?.data?.cart) {
+      return err(400, "Invalid Cart", "Cart could not be loaded.");
+    }
+
+    const cart = json.data.cart;
 
     if (!Array.isArray(cart.items) || cart.items.length === 0) {
       return err(400, "Empty Cart", "Cannot create order from empty cart.");
     }
 
-    /* ───── Validate 50-min eligibility (from cart if present) ───── */
-    const isEligibleFor50 =
-      cart.meta?.delivery_50min_eligible === true;
+    /* ───── Validate 50-minute eligibility ───── */
+
+    const isEligibleFor50 = cart.meta?.delivery_50min_eligible === true;
 
     if (deliverySpeed === "express_50" && !isEligibleFor50) {
-      return err(
-        400,
-        "Delivery Not Eligible",
-        "This cart is not eligible for 50-minute delivery."
-      );
+      return err(400, "Delivery Not Eligible", "This cart is not eligible for 50-minute delivery.");
     }
 
     /* ───── Load Customer ───── */
@@ -81,18 +85,16 @@ export async function POST(req) {
 
     const user = userSnap.data();
 
-    /* ───── Generate Order ID ───── */
+    /* ───── Canonical Internal Order ID (UUID) ───── */
 
-    const orderId = `ord_${Date.now()}_${Math.random()
-      .toString(36)
-      .slice(2, 7)}`;
+    const orderId = crypto.randomUUID(); // internal, never exposed to Peach
 
     const timestamp = now();
 
     /* ───── Generate Sequential Order Number ───── */
 
     const counterRef = doc(db, "system_counters", "orders");
-    let orderNumber = null;
+    let orderNumber;
 
     await runTransaction(db, async tx => {
       const snap = await tx.get(counterRef);
@@ -104,6 +106,12 @@ export async function POST(req) {
       orderNumber = `BVG-${String(next).padStart(6, "0")}`;
     });
 
+    /* ───── Peach-safe merchantTransactionId ───── */
+    /* <= 16 chars, deterministic, idempotent */
+
+    const merchantTransactionId = orderNumber.replace("-", "");
+    // e.g. BVG000123
+
     /* ───── Build Order Document ───── */
 
     const orderDoc = {
@@ -112,6 +120,7 @@ export async function POST(req) {
       order: {
         orderId,
         orderNumber,
+        merchantTransactionId,
         customerId,
         type,
         channel: cart.cart?.channel || source,
@@ -159,9 +168,7 @@ export async function POST(req) {
         proof_of_delivery: { url: null, uploadedAt: null }
       },
 
-      audit: {
-        edits: []
-      },
+      audit: { edits: [] },
 
       meta: {
         source,
@@ -178,15 +185,16 @@ export async function POST(req) {
 
     /* ───── Persist Order ───── */
 
-    await setDoc(doc(db, "orders", orderId), orderDoc);
+    await setDoc(doc(db, "orders_v2", orderId), orderDoc);
 
     return ok({
       orderId,
       orderNumber,
+      merchantTransactionId,
       status: orderDoc.order.status.order
     });
 
   } catch (e) {
-    return err(500, "Server Error", e.message);
+    return err(500, "Server Error", e?.message || "Unexpected server error.");
   }
 }

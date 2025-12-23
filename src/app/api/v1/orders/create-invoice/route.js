@@ -35,7 +35,7 @@ export async function POST(req) {
 
     /* ───── Load Order ───── */
 
-    const orderRef = doc(db, "orders", orderId);
+    const orderRef = doc(db, "orders_v2", orderId);
     const orderSnap = await getDoc(orderRef);
 
     if (!orderSnap.exists()) {

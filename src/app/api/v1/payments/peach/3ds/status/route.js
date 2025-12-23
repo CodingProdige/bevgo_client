@@ -25,11 +25,11 @@ const err = (s, t, m, x = {}) =>
 
 const now = () => new Date().toISOString();
 
-/* ───────────────── ENV ───────────────── */
+/* ───────────────── ENV (LIVE S2S) ───────────────── */
 
-const ACCESS_TOKEN = process.env.PEACH_ACCESS_TOKEN;
-const ENTITY_ID_3DS = process.env.PEACH_ENTITY_3DS;
-const HOST = "sandbox-card.peachpayments.com";
+const ACCESS_TOKEN = process.env.PEACH_S2S_ACCESS_TOKEN;
+const ENTITY_ID_3DS = process.env.PEACH_S2S_ENTITY_ID;
+const HOST = "oppwa.com";
 
 /* ───────────────── PEACH GET ───────────────── */
 
@@ -49,10 +49,11 @@ function peachGet(path) {
       const chunks = [];
       res.on("data", c => chunks.push(c));
       res.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
         try {
-          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-        } catch (e) {
-          reject(e);
+          resolve(JSON.parse(raw));
+        } catch {
+          reject(new Error(raw));
         }
       });
     });
@@ -72,7 +73,8 @@ export async function POST(req) {
     let ref;
     let attempt;
 
-    /* ───── Resolve by orderId if needed ───── */
+    /* ───── Resolve 3DS attempt ───── */
+
     if (!attemptId) {
       if (!orderId) {
         return err(
@@ -106,6 +108,7 @@ export async function POST(req) {
     } else {
       ref = doc(db, "payment_3ds_attempts", attemptId);
       const snap = await getDoc(ref);
+
       if (!snap.exists()) {
         return err(
           404,
@@ -113,24 +116,26 @@ export async function POST(req) {
           "Invalid threeDSecureId"
         );
       }
+
       attempt = snap.data();
     }
 
-    /* ───── FETCH STATUS FROM PEACH ───── */
+    /* ───── Fetch status from Peach ───── */
 
     const data = await peachGet(
       `/v1/threeDSecure/${attemptId}?entityId=${ENTITY_ID_3DS}`
     );
 
     const code = data?.result?.code || "";
-    const authenticated = code.startsWith("000.");
 
+    const authenticated = code === "000.000.000";
     let status = "pending";
+
     if (authenticated) status = "authenticated";
-    else if (code.startsWith("100.") || code.startsWith("200."))
+    else if (code.startsWith("100.") || code.startsWith("200.") || code.startsWith("800."))
       status = "failed";
 
-    /* ───── UPDATE FIRESTORE ───── */
+    /* ───── Update Firestore ───── */
 
     await updateDoc(ref, {
       status,
@@ -142,11 +147,25 @@ export async function POST(req) {
       updatedAt: now()
     });
 
-    /* ───── RESPONSE ───── */
+    /* ───── Resolve orderNumber ───── */
+
+    let orderNumber = attempt.orderNumber || null;
+
+    if (!orderNumber && attempt.orderId) {
+      const orderRef = doc(db, "orders_v2", attempt.orderId);
+      const orderSnap = await getDoc(orderRef);
+
+      if (orderSnap.exists()) {
+        orderNumber = orderSnap.data()?.order?.orderNumber || null;
+      }
+    }
+
+    /* ───── Response ───── */
 
     return ok({
       threeDSecureId: attemptId,
       orderId: attempt.orderId,
+      orderNumber,
       authenticated,
       status,
       canCharge: authenticated

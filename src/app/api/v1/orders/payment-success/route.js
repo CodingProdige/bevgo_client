@@ -68,7 +68,7 @@ export async function POST(req) {
 
     /* ───── Load Order ───── */
 
-    const ref = doc(db, "orders", orderId);
+    const ref = doc(db, "orders_v2", orderId);
     const snap = await getDoc(ref);
 
     if (!snap.exists()) {

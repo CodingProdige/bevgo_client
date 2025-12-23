@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import https from "https";
 import querystring from "querystring";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebaseConfig";
 
 /* ───────────────── HELPERS ───────────────── */
@@ -18,9 +18,12 @@ const now = () => new Date().toISOString();
 
 /* ───────────────── ENV ───────────────── */
 
-const ACCESS_TOKEN = process.env.PEACH_ACCESS_TOKEN;
-const ENTITY_ID_3DS = process.env.PEACH_ENTITY_3DS;
-const HOST = "sandbox-card.peachpayments.com";
+const ENTITY_ID_3DS = process.env.PEACH_S2S_ENTITY_ID;
+const ACCESS_TOKEN = process.env.PEACH_S2S_ACCESS_TOKEN;
+
+const HOST = "oppwa.com";
+
+
 
 /* ───────────────── BRAND DETECTION ───────────────── */
 
@@ -36,7 +39,6 @@ function detectBrand(pan) {
 }
 
 /* ───────────────── PEACH REQUEST ───────────────── */
-
 function peachRequest(path, form) {
   const body = querystring.stringify(form);
 
@@ -48,7 +50,7 @@ function peachRequest(path, form) {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       "Content-Length": Buffer.byteLength(body),
-      Authorization: `Bearer ${ACCESS_TOKEN}`
+      "Authorization": `Bearer ${ACCESS_TOKEN}`
     }
   };
 
@@ -57,10 +59,11 @@ function peachRequest(path, form) {
       const chunks = [];
       res.on("data", c => chunks.push(c));
       res.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
         try {
-          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-        } catch (e) {
-          reject(e);
+          resolve(JSON.parse(raw));
+        } catch {
+          reject(new Error(raw));
         }
       });
     });
@@ -70,6 +73,8 @@ function peachRequest(path, form) {
     req.end();
   });
 }
+
+
 
 /* ───────────────── ENDPOINT ───────────────── */
 
@@ -103,14 +108,37 @@ export async function POST(req) {
       );
     }
 
+    /* ───── Load order to get orderNumber ───── */
+
+    const orderRef = doc(db, "orders_v2", orderId);
+    const orderSnap = await getDoc(orderRef);
+
+    if (!orderSnap.exists()) {
+      return err(404, "Order Not Found", "Order does not exist.");
+    }
+
+    const order = orderSnap.data();
+    const orderNumber = order?.order?.orderNumber;
+
+    if (!orderNumber) {
+      return err(
+        500,
+        "Invalid Order",
+        "order.orderNumber missing on order."
+      );
+    }
+
     /* ───── merchantTransactionId (≤16 chars) ───── */
+
     const merchantTransactionId = orderId.slice(0, 16);
 
-    /* ───── Build return URL WITH orderId ───── */
+    /* ───── Build return URL WITH orderNumber ───── */
+
     const shopperResultUrl =
-      `${browser.returnUrl}?orderId=${encodeURIComponent(orderId)}`;
+      `${browser.returnUrl}?orderNumber=${encodeURIComponent(orderNumber)}`;
 
     /* ───── Build 3DS Payload ───── */
+
     const form = {
       entityId: ENTITY_ID_3DS,
       amount,
@@ -139,11 +167,11 @@ export async function POST(req) {
         browser.acceptHeader || "text/html",
       "customer.browser.timezone": browser.timezone || "0",
 
-      shopperResultUrl,
-      testMode: "EXTERNAL"
+      shopperResultUrl
     };
 
     /* ───── Call Peach ───── */
+
     const data = await peachRequest("/v1/threeDSecure", form);
 
     if (!data?.id) {
@@ -159,11 +187,13 @@ export async function POST(req) {
     const frictionless = !data.redirect;
 
     /* ───── Persist 3DS Attempt ───── */
+
     await setDoc(
       doc(db, "payment_3ds_attempts", data.id),
       {
         threeDSecureId: data.id,
         orderId,
+        orderNumber,
         userId: userId || null,
 
         status: frictionless ? "frictionless" : "initiated",
@@ -194,10 +224,12 @@ export async function POST(req) {
     );
 
     /* ───── Response ───── */
+
     if (frictionless) {
       return ok({
         threeDSecureId: data.id,
         frictionless: true,
+        orderNumber,
         title: "Authentication Complete",
         message: "No additional verification was required."
       });
@@ -206,6 +238,7 @@ export async function POST(req) {
     return ok({
       threeDSecureId: data.id,
       frictionless: false,
+      orderNumber,
       redirectUrl: data.redirect.url,
       redirectParams: data.redirect.parameters,
       title: "Verification Required",
