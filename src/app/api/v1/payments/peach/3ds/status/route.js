@@ -126,14 +126,41 @@ export async function POST(req) {
       `/v1/threeDSecure/${attemptId}?entityId=${ENTITY_ID_3DS}`
     );
 
-    const code = data?.result?.code || "";
+    const resultCode = data?.result?.code || "";
+    const resultDescription = data?.result?.description || null;
 
-    const authenticated = code === "000.000.000";
+    const authenticated = resultCode === "000.000.000";
+
     let status = "pending";
-
     if (authenticated) status = "authenticated";
-    else if (code.startsWith("100.") || code.startsWith("200.") || code.startsWith("800."))
+    else if (
+      resultCode.startsWith("100.") ||
+      resultCode.startsWith("200.") ||
+      resultCode.startsWith("800.")
+    )
       status = "failed";
+
+    /* ───── Extract 3DS metadata (diagnostics) ───── */
+
+    const threeDS = data?.authentication?.threeDSecure || {};
+
+    const flow = threeDS?.flow || null;
+    const liabilityShift = threeDS?.liabilityShift ?? null;
+    const challengeRequired = threeDS?.challengeRequired ?? null;
+
+    /* ───── Recommendation (non-breaking hint) ───── */
+
+    let recommendation = "unknown";
+
+    if (authenticated) {
+      recommendation = "charge_allowed";
+    } else if (flow === "FRICTIONLESS") {
+      recommendation = "issuer_rejected_frictionless";
+    } else if (challengeRequired === false) {
+      recommendation = "issuer_declined_authentication";
+    } else {
+      recommendation = "retry_or_use_different_card";
+    }
 
     /* ───── Update Firestore ───── */
 
@@ -160,7 +187,7 @@ export async function POST(req) {
       }
     }
 
-    /* ───── Response ───── */
+    /* ───── Response (additive only) ───── */
 
     return ok({
       threeDSecureId: attemptId,
@@ -168,7 +195,17 @@ export async function POST(req) {
       orderNumber,
       authenticated,
       status,
-      canCharge: authenticated
+      canCharge: authenticated,
+
+      // 👇 NEW — purely diagnostic, no behavior change
+      gateway: {
+        code: resultCode,
+        description: resultDescription,
+        flow,
+        liabilityShift,
+        challengeRequired,
+        recommendation
+      }
     });
 
   } catch (e) {
