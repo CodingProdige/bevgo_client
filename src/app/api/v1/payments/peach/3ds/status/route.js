@@ -2,58 +2,67 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import https from "https";
+import { db } from "@/lib/firebaseConfig";
 import {
   doc,
   getDoc,
   updateDoc,
-  collection,
-  query,
-  where,
-  orderBy,
-  limit,
-  getDocs
+  serverTimestamp,
 } from "firebase/firestore";
-import { db } from "@/lib/firebaseConfig";
 
-/* ───────────────── HELPERS ───────────────── */
+/* ───────── CORS CONFIG ───────── */
+
+const ALLOWED_ORIGIN = "https://3ds.bevgo.co.za";
+
+function withCors(res) {
+  res.headers.set("Access-Control-Allow-Origin", ALLOWED_ORIGIN);
+  res.headers.set("Access-Control-Allow-Credentials", "true");
+  res.headers.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization"
+  );
+  res.headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+  return res;
+}
+
+/* ───────── HELPERS ───────── */
 
 const ok = (p = {}, s = 200) =>
-  NextResponse.json({ ok: true, ...p }, { status: s });
+  withCors(NextResponse.json({ ok: true, ...p }, { status: s }));
 
 const err = (s, t, m, x = {}) =>
-  NextResponse.json({ ok: false, title: t, message: m, ...x }, { status: s });
+  withCors(NextResponse.json({ ok: false, title: t, message: m, ...x }, { status: s }));
 
-const now = () => new Date().toISOString();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/* ───────────────── ENV (LIVE S2S) ───────────────── */
+/* ───────── ENV ───────── */
 
-const ACCESS_TOKEN = process.env.PEACH_S2S_ACCESS_TOKEN;
-const ENTITY_ID_3DS = process.env.PEACH_S2S_ENTITY_ID;
 const HOST = "oppwa.com";
+const ENTITY_ID = process.env.PEACH_S2S_ENTITY_ID;
+const ACCESS_TOKEN = process.env.PEACH_S2S_ACCESS_TOKEN;
 
-/* ───────────────── PEACH GET ───────────────── */
+/* ───────── PEACH REQUEST ───────── */
 
-function peachGet(path) {
+async function fetchStatus(id) {
+  const path = `/v1/threeDSecure/${id}?entityId=${ENTITY_ID}`;
+
   const options = {
     port: 443,
     host: HOST,
     path,
     method: "GET",
-    headers: {
-      Authorization: `Bearer ${ACCESS_TOKEN}`
-    }
+    headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
   };
 
   return new Promise((resolve, reject) => {
-    const req = https.request(options, res => {
-      const chunks = [];
-      res.on("data", c => chunks.push(c));
+    const req = https.request(options, (res) => {
+      const buf = [];
+      res.on("data", (c) => buf.push(c));
       res.on("end", () => {
-        const raw = Buffer.concat(chunks).toString("utf8");
         try {
-          resolve(JSON.parse(raw));
-        } catch {
-          reject(new Error(raw));
+          resolve(JSON.parse(Buffer.concat(buf).toString("utf8")));
+        } catch (e) {
+          reject(e);
         }
       });
     });
@@ -63,152 +72,113 @@ function peachGet(path) {
   });
 }
 
-/* ───────────────── ENDPOINT ───────────────── */
+/* ───────── STATE HELPERS (PATCHED) ───────── */
 
-export async function POST(req) {
+/**
+ * Determine if polling should stop
+ */
+function isFinal(gateway) {
+  const code = gateway?.result?.code || "";
+  const auth = gateway?.threeDSecure?.authenticationStatus;
+  const eci = gateway?.threeDSecure?.eci;
+
+  // Fully authenticated
+  if (auth === "Y" || eci === "05" || code.startsWith("000.000") || code.startsWith("000.3"))
+    return true;
+
+  // Explicit declines/failures
+  if (!code.startsWith("000.")) return true;
+
+  // Still in async steps
+  return false;
+}
+
+/**
+ * Map gateway to simplified status
+ */
+function mapStatus(gateway) {
+  const code = gateway?.result?.code || "";
+  const auth = gateway?.threeDSecure?.authenticationStatus;
+  const eci = gateway?.threeDSecure?.eci;
+
+  // 🔥 SUCCESS (3DS passed)
+  if (auth === "Y" || eci === "05" || code.startsWith("000.3") || code.startsWith("000.000"))
+    return "authenticated";
+
+  // In progress
+  if (code.startsWith("000.")) return "pending";
+
+  // Declined / timed-out / abandoned
+  return "failed";
+}
+
+/* ───────── OPTIONS (Preflight) ───────── */
+
+export async function OPTIONS() {
+  return withCors(NextResponse.json({ ok: true }));
+}
+
+/* ───────── GET ───────── */
+
+export async function GET(req, { params }) {
   try {
-    const { threeDSecureId, orderId } = await req.json();
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id") || params?.id;
+    const poll = searchParams.get("poll") === "true";
 
-    let attemptId = threeDSecureId;
-    let ref;
-    let attempt;
+    if (!id) return err(400, "Missing id", "3DS id is required.");
+    if (!ENTITY_ID || !ACCESS_TOKEN)
+      return err(500, "Config Error", "3DS credentials missing.");
 
-    /* ───── Resolve 3DS attempt ───── */
+    const ref = doc(db, "payment_3ds_attempts", id);
+    const baseSnap = await getDoc(ref);
 
-    if (!attemptId) {
-      if (!orderId) {
-        return err(
-          400,
-          "Missing Parameters",
-          "threeDSecureId or orderId is required"
-        );
+    if (!baseSnap.exists())
+      return err(404, "Attempt Not Found", `No attempt ${id}`);
+
+    let attempt = 0;
+    let gateway;
+    let lastStatus = null;
+
+    do {
+      gateway = await fetchStatus(id);
+
+      const status = mapStatus(gateway);
+
+      // only write DB when changed
+      if (status !== lastStatus) {
+        await updateDoc(ref, {
+          status,
+          gatewayLast: gateway,
+          resultCode: gateway?.result?.code || "",
+          updatedAt: serverTimestamp(),
+        });
+        lastStatus = status;
       }
 
-      const q = query(
-        collection(db, "payment_3ds_attempts"),
-        where("orderId", "==", orderId),
-        orderBy("createdAt", "desc"),
-        limit(1)
-      );
+      if (!poll || isFinal(gateway)) break;
 
-      const snaps = await getDocs(q);
+      attempt++;
+      await sleep(2000);
+    } while (attempt < 8);
 
-      if (snaps.empty) {
-        return err(
-          404,
-          "3DS Attempt Not Found",
-          "No 3DS attempt found for this order"
-        );
-      }
-
-      const docSnap = snaps.docs[0];
-      attemptId = docSnap.id;
-      attempt = docSnap.data();
-      ref = docSnap.ref;
-    } else {
-      ref = doc(db, "payment_3ds_attempts", attemptId);
-      const snap = await getDoc(ref);
-
-      if (!snap.exists()) {
-        return err(
-          404,
-          "3DS Attempt Not Found",
-          "Invalid threeDSecureId"
-        );
-      }
-
-      attempt = snap.data();
-    }
-
-    /* ───── Fetch status from Peach ───── */
-
-    const data = await peachGet(
-      `/v1/threeDSecure/${attemptId}?entityId=${ENTITY_ID_3DS}`
-    );
-
-    const resultCode = data?.result?.code || "";
-    const resultDescription = data?.result?.description || null;
-
-    const authenticated = resultCode === "000.000.000";
-
-    let status = "pending";
-    if (authenticated) status = "authenticated";
-    else if (
-      resultCode.startsWith("100.") ||
-      resultCode.startsWith("200.") ||
-      resultCode.startsWith("800.")
-    )
-      status = "failed";
-
-    /* ───── Extract 3DS metadata (diagnostics) ───── */
-
-    const threeDS = data?.authentication?.threeDSecure || {};
-
-    const flow = threeDS?.flow || null;
-    const liabilityShift = threeDS?.liabilityShift ?? null;
-    const challengeRequired = threeDS?.challengeRequired ?? null;
-
-    /* ───── Recommendation (non-breaking hint) ───── */
-
-    let recommendation = "unknown";
-
-    if (authenticated) {
-      recommendation = "charge_allowed";
-    } else if (flow === "FRICTIONLESS") {
-      recommendation = "issuer_rejected_frictionless";
-    } else if (challengeRequired === false) {
-      recommendation = "issuer_declined_authentication";
-    } else {
-      recommendation = "retry_or_use_different_card";
-    }
-
-    /* ───── Update Firestore ───── */
-
-    await updateDoc(ref, {
-      status,
-      authenticated,
-      peach: {
-        ...(attempt.peach || {}),
-        rawStatusResponse: data
-      },
-      updatedAt: now()
-    });
-
-    /* ───── Resolve orderNumber ───── */
-
-    let orderNumber = attempt.orderNumber || null;
-
-    if (!orderNumber && attempt.orderId) {
-      const orderRef = doc(db, "orders_v2", attempt.orderId);
-      const orderSnap = await getDoc(orderRef);
-
-      if (orderSnap.exists()) {
-        orderNumber = orderSnap.data()?.order?.orderNumber || null;
-      }
-    }
-
-    /* ───── Response (additive only) ───── */
+    const finalSnap = await getDoc(ref);
+    const finalDoc = finalSnap.data();
 
     return ok({
-      threeDSecureId: attemptId,
-      orderId: attempt.orderId,
-      orderNumber,
-      authenticated,
-      status,
-      canCharge: authenticated,
-
-      // 👇 NEW — purely diagnostic, no behavior change
-      gateway: {
-        code: resultCode,
-        description: resultDescription,
-        flow,
-        liabilityShift,
-        challengeRequired,
-        recommendation
-      }
+      gateway,
+      polled: poll,
+      attempts: attempt,
+      status: finalDoc?.status,
     });
 
   } catch (e) {
-    return err(500, "Server Error", e.message);
+    console.error("3DS Poll Error", e);
+    return err(
+      500,
+      "3DS Status Failed",
+      e?.message || "Unexpected error",
+      { error: String(e) }
+    );
   }
 }

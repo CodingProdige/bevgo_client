@@ -1,3 +1,4 @@
+// (same imports)
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -6,7 +7,7 @@ import querystring from "querystring";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebaseConfig";
 
-/* ───────────────── HELPERS ───────────────── */
+
 
 const ok = (p = {}, s = 200) =>
   NextResponse.json({ ok: true, ...p }, { status: s });
@@ -16,54 +17,9 @@ const err = (s, t, m, x = {}) =>
 
 const now = () => new Date().toISOString();
 
-const normalizeChannel = value => {
-  const raw = String(value || "web").toLowerCase();
-  if (["app", "ios", "android", "mobile"].includes(raw)) return "APP";
-  if (["browser", "web"].includes(raw)) return "BROWSER";
-  return "BROWSER";
-};
-
-const normalizeThreeDSChannel = value => {
-  const raw = String(value || "").toUpperCase();
-  if (raw === "01") return "APP";
-  if (raw === "02") return "BROWSER";
-  if (raw === "APP" || raw === "BROWSER") return raw;
-  return normalizeChannel(value);
-};
-
-const threeDSChannelValue = channel =>
-  channel === "APP" ? "01" : "02";
-
-function buildThreeDSecureFields(threeDSecure, channel) {
-  const fields = { "threeDSecure.channel": threeDSChannelValue(channel) };
-  if (!threeDSecure || typeof threeDSecure !== "object") return fields;
-
-  const providedChannel = threeDSecure.channel;
-  if (providedChannel) {
-    const normalized = normalizeThreeDSChannel(providedChannel);
-    if (!normalized || normalized !== channel) {
-      return null;
-    }
-  }
-
-  for (const [key, value] of Object.entries(threeDSecure)) {
-    if (value == null || key === "channel") continue;
-    const formKey = key.startsWith("threeDSecure.")
-      ? key
-      : `threeDSecure.${key}`;
-    fields[formKey] = value;
-  }
-
-  return fields;
-}
-
-/* ───────────────── ENV ───────────────── */
-
 const ENTITY_ID_3DS = process.env.PEACH_S2S_ENTITY_ID;
 const ACCESS_TOKEN = process.env.PEACH_S2S_ACCESS_TOKEN;
 const HOST = "oppwa.com";
-
-/* ───────────────── BRAND DETECTION ───────────────── */
 
 function detectBrand(pan) {
   if (!pan) return "VISA";
@@ -72,8 +28,6 @@ function detectBrand(pan) {
   if (/^3[47]/.test(pan)) return "AMEX";
   return "VISA";
 }
-
-/* ───────────────── PEACH REQUEST ───────────────── */
 
 function peachRequest(path, form) {
   const body = querystring.stringify(form);
@@ -108,69 +62,45 @@ function peachRequest(path, form) {
   });
 }
 
-/* ───────────────── ENDPOINT ───────────────── */
-
 export async function POST(req) {
   try {
-    const {
-      userId,
-      amount,
-      currency,
-      card,
-      browser,
-      channel,
-      threeDSecure,
-      orderId
-    } = await req.json();
+    const { userId, amount, currency, card, browser, orderId } =
+      await req.json();
 
-    if (!orderId || !amount || !currency || !card) {
+    if (!orderId || !amount || !currency || !card)
       return err(400, "Invalid Request", "Missing required parameters.");
-    }
 
-    /* ───── Amount normalization (STRICT) ───── */
+    if (!ENTITY_ID_3DS || !ACCESS_TOKEN)
+      return err(500, "Config Error", "3DS credentials not configured.");
+
     const formattedAmount = Number(amount).toFixed(2);
-    if (Number.isNaN(Number(formattedAmount))) {
-      return err(400, "Invalid Amount", "Amount must be numeric.");
-    }
 
-    /* ───── Load order ───── */
     const orderSnap = await getDoc(doc(db, "orders_v2", orderId));
-    if (!orderSnap.exists()) {
+    if (!orderSnap.exists())
       return err(404, "Order Not Found", "Invalid orderId.");
-    }
 
-    const orderNumber = orderSnap.data()?.order?.orderNumber;
-    if (!orderNumber) {
-      return err(500, "Invalid Order", "orderNumber missing.");
-    }
+    const orderData = orderSnap.data() || {};
+    const orderNumber = orderData?.order?.orderNumber;
 
-    const merchantTransactionId = orderId.slice(0, 16);
-
-    /* ───── Browser-channel 3DS payload (EMVCo compliant) ───── */
-    const deviceChannel = normalizeChannel(channel);
-    const threeDSecureFields = buildThreeDSecureFields(
-      threeDSecure,
-      deviceChannel
-    );
-
-    if (!threeDSecureFields) {
-      return err(
-        400,
-        "Invalid 3DS Channel",
-        "threeDSecure.channel conflicts with channel."
-      );
-    }
+    const merchantTransactionId =
+      orderData?.order?.merchantTransactionId ||
+      orderNumber ||
+      String(orderId).slice(0, 16);
 
     const headers = req.headers;
     const browserInfo = browser || {};
+
     const acceptHeader =
       browserInfo.acceptHeader || headers.get("accept") || "*/*";
+
     const userAgent =
       browserInfo.userAgent || headers.get("user-agent") || "unknown";
+
     const language =
       browserInfo.language ||
       headers.get("accept-language")?.split(",")[0] ||
       "en";
+
     const ip =
       browserInfo.ip ||
       headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
@@ -195,74 +125,72 @@ export async function POST(req) {
       "merchant.country": "ZA",
       "merchant.mcc": "5399",
 
-      shopperResultUrl:
-        "https://client-portal.bevgo.co.za/redirect",
+      shopperResultUrl: "https://3ds.bevgo.co.za/complete",
 
       "customer.ip": ip,
-      ...threeDSecureFields
+
+      "customer.browser.acceptHeader": acceptHeader,
+      "customer.browser.userAgent": userAgent,
+      "customer.browser.language": language,
+      "customer.browser.screenColorDepth":
+        String(browserInfo.screenColorDepth ?? "24"),
+      "customer.browser.screenHeight":
+        String(browserInfo.screenHeight ?? "900"),
+      "customer.browser.screenWidth":
+        String(browserInfo.screenWidth ?? "1440"),
+      "customer.browser.javaEnabled":
+        String(browserInfo.javaEnabled ?? "false"),
+      "customer.browser.timezone":
+        String(browserInfo.timezone ?? 120),
+      "customer.browser.challengeWindow":
+        String(browserInfo.challengeWindow ?? "4")
     };
 
-    if (deviceChannel === "BROWSER") {
-      form["customer.browser.acceptHeader"] = acceptHeader;
-      form["customer.browser.userAgent"] = userAgent;
-      form["customer.browser.language"] = language;
-      form["customer.browser.timezone"] =
-        browserInfo.timezone || "120";
+    const gatewayResponse = await peachRequest("/v1/threeDSecure", form);
 
-      form["customer.browser.screenHeight"] =
-        browserInfo.screenHeight || "900";
-      form["customer.browser.screenWidth"] =
-        browserInfo.screenWidth || "1440";
-      form["customer.browser.screenColorDepth"] =
-        browserInfo.screenColorDepth || "24";
-      form["customer.browser.javaEnabled"] =
-        browserInfo.javaEnabled || "false";
-      form["customer.browser.challengeWindow"] =
-        browserInfo.challengeWindow || "4";
-    }
-
-    const data = await peachRequest("/v1/threeDSecure", form);
-
-    if (!data?.id) {
+    if (!gatewayResponse?.id)
       return err(
         502,
         "3DS Initiation Failed",
-        data?.result?.description || "Unknown error",
-        { gateway: data }
+        gatewayResponse?.result?.description || "Unknown gateway error.",
+        { gateway: gatewayResponse }
       );
-    }
 
-    const timestamp = now();
-    const frictionless = !data.redirect;
+    const threeDSecureId = gatewayResponse.id;
+    const redirect = gatewayResponse.redirect || null;
+    const frictionless = !redirect;
 
     await setDoc(
-      doc(db, "payment_3ds_attempts", data.id),
+      doc(db, "payment_3ds_attempts", threeDSecureId),
       {
-        threeDSecureId: data.id,
+        threeDSecureId,
         orderId,
         orderNumber,
-        userId,
+        userId: userId ?? null,
         amount: formattedAmount,
         currency,
         merchantTransactionId,
-        channel: deviceChannel,
+        channel: "BROWSER",
         frictionless,
         status: frictionless ? "frictionless" : "initiated",
-        peach: data,
-        createdAt: timestamp,
-        updatedAt: timestamp
+        redirect,
+        peach: gatewayResponse,
+        createdAt: now(),
+        updatedAt: now()
       },
       { merge: false }
     );
 
     return ok({
-      threeDSecureId: data.id,
+      threeDSecureId,
       frictionless,
-      orderNumber,
-      redirect: data.redirect || null
+      redirect,
+      startUrl: `https://3ds.bevgo.co.za/start?threeDSecureId=${encodeURIComponent(
+        threeDSecureId
+      )}`
     });
-
   } catch (e) {
-    return err(500, "Server Error", e.message);
+    console.error(e);
+    return err(500, "Server Error", e.message || "Unexpected error.");
   }
 }

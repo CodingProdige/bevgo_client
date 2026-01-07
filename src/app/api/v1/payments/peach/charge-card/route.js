@@ -1,19 +1,12 @@
 export const runtime = "nodejs";
 
+import { applyOrderPaymentSuccess } from "@/lib/payments/applyOrderPaymentSuccess";
 import { NextResponse } from "next/server";
 import https from "https";
 import querystring from "querystring";
-import {
-  collection,
-  query,
-  where,
-  getDocs,
-  doc,
-  getDoc
-} from "firebase/firestore";
-
+import { collection, doc, getDoc, getDocs, query, updateDoc, where } from "firebase/firestore";
 import { db } from "@/lib/firebaseConfig";
-import { applyOrderPaymentSuccess } from "@/lib/payments/applyOrderPaymentSuccess";
+import crypto from "crypto";
 
 /* ───────── HELPERS ───────── */
 
@@ -23,13 +16,18 @@ const ok = (p = {}, s = 200) =>
 const err = (s, title, message, extra = {}) =>
   NextResponse.json({ ok: false, title, message, ...extra }, { status: s });
 
-/* ───────── ENV (LIVE S2S) ───────── */
+const now = () => new Date().toISOString();
+const uid = () => crypto.randomUUID();
+
+/* ───────── ENV ───────── */
 
 const ACCESS_TOKEN = process.env.PEACH_S2S_ACCESS_TOKEN;
 const ENTITY_ID = process.env.PEACH_S2S_ENTITY_ID;
 const HOST = "oppwa.com";
+const DEFAULT_SHOPPER_RESULT_URL =
+  process.env.PEACH_SHOPPER_RESULT_URL || "https://3ds.bevgo.co.za/complete";
 
-/* ───────── PEACH REQUEST ───────── */
+/* ───────── PEACH ───────── */
 
 function peachRequest(path, form) {
   const body = querystring.stringify(form);
@@ -51,12 +49,7 @@ function peachRequest(path, form) {
         const chunks = [];
         res.on("data", c => chunks.push(c));
         res.on("end", () => {
-          const raw = Buffer.concat(chunks).toString("utf8");
-          try {
-            resolve(JSON.parse(raw));
-          } catch {
-            reject(new Error(raw));
-          }
+          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
         });
       }
     );
@@ -73,113 +66,205 @@ export async function POST(req) {
   try {
     const {
       userId,
-      merchantTransactionId,
       amount,
       currency,
-      threeDSecureId,
-      customer
+      merchantTransactionId,
+      card,
+      billing,
+      customer,
+      shopperResultUrl,
+      saveCard = true
     } = await req.json();
 
-    if (!merchantTransactionId || !amount || !currency || !threeDSecureId) {
-      return err(
-        400,
-        "Missing Information",
-        "merchantTransactionId, amount, currency and threeDSecureId are required."
-      );
+    if (!userId || !amount || !currency || !merchantTransactionId || !card) {
+      return err(400, "Missing Information", "Please check your payment details.");
     }
 
-    /* ───── FIND ORDER ───── */
+    const userRef = doc(db, "users", userId);
+    const snap = await getDoc(userRef);
 
-    let snap = await getDocs(
-      query(
-        collection(db, "orders_v2"),
-        where("order.merchantTransactionId", "==", merchantTransactionId)
-      )
-    );
-
-    if (snap.empty) {
-      snap = await getDocs(
-        query(
-          collection(db, "orders_v2"),
-          where("order.orderNumber", "==", merchantTransactionId)
-        )
-      );
+    if (!snap.exists()) {
+      return err(404, "User Not Found", "User does not exist.");
     }
 
-    if (snap.empty) {
-      return err(404, "Order Not Found", "No matching order found.");
-    }
+    const user = snap.data();
+    const cards = user.paymentMethods?.cards || [];
 
-    if (snap.size > 1) {
-      return err(409, "Multiple Orders Found", "Ambiguous merchantTransactionId.");
-    }
-
-    const docSnap = snap.docs[0];
-    const orderDoc = docSnap.data();
-    const documentId = docSnap.id;
-    const orderId = orderDoc?.order?.orderId;
-
-    if (!orderId) {
-      return err(500, "Invalid Order", "order.orderId missing.");
-    }
-
-    const formattedAmount = Number(amount).toFixed(2);
-
-    /* ───── POST-3DS CHARGE ───── */
+    /* ───── PEACH PAYMENT ───── */
 
     const peachPayload = {
       entityId: ENTITY_ID,
-      amount: formattedAmount,
+      amount,
       currency,
+      paymentBrand: card.brand || "VISA",
       paymentType: "DB",
 
-      threeDSecureId,
+      "card.number": card.number,
+      "card.holder": card.holder,
+      "card.expiryMonth": card.expiryMonth,
+      "card.expiryYear": card.expiryYear,
+      "card.cvv": card.cvv,
 
-      merchantTransactionId: orderDoc.order.merchantTransactionId,
-
+      merchantTransactionId,
       createRegistration: "true",
 
       "standingInstruction.mode": "INITIAL",
       "standingInstruction.source": "CIT",
       "standingInstruction.type": "UNSCHEDULED",
 
-      "customer.email": customer?.email || "unknown@bevgo.co.za"
+      "customer.email": customer?.email || "unknown@bevgo.co.za",
+      shopperResultUrl: shopperResultUrl || DEFAULT_SHOPPER_RESULT_URL
     };
 
-    const peachRes = await peachRequest("/v1/payments", peachPayload);
+    const data = await peachRequest("/v1/payments", peachPayload);
 
-    if (!peachRes?.result?.code?.startsWith("000.")) {
+    if (!data?.result?.code?.startsWith("000.")) {
       return err(
         402,
         "Payment Failed",
-        peachRes?.result?.description || "Payment declined",
-        { gateway: peachRes }
+        data?.result?.description || "Your card was declined.",
+        { gateway: data }
       );
     }
 
-    /* ───── APPLY PAYMENT ───── */
+    const timestamp = now();
+
+    /* ───── DUPLICATE CARD CHECK ───── */
+
+    let cardId = null;
+
+    const existingCard = cards.find(c =>
+      c.bin === data.card?.bin &&
+      c.last4 === data.card?.last4Digits &&
+      c.expiryMonth === data.card?.expiryMonth &&
+      c.expiryYear === data.card?.expiryYear
+    );
+
+    if (existingCard) {
+      cardId = existingCard.id;
+    }
+
+    /* ───── BUILD PAYMENT ATTEMPT ───── */
+
+    const paymentAttempt = {
+      merchantTransactionId,
+      paymentId: data.id,
+      amount,
+      currency,
+      status: "success",
+      createdAt: timestamp
+    };
+
+    let updatedCards;
+
+    if (existingCard) {
+      updatedCards = cards.map(c =>
+        c.id === existingCard.id
+          ? {
+              ...c,
+              paymentAttempts: [...(c.paymentAttempts || []), paymentAttempt],
+              lastCharged: [...(c.lastCharged || []), timestamp],
+              updatedAt: timestamp
+            }
+          : c
+      );
+    } else if (saveCard) {
+      const newCard = {
+        id: uid(),
+        status: "active",
+        type: "card",
+
+        brand: data.paymentBrand,
+        last4: data.card.last4Digits,
+        bin: data.card.bin,
+        expiryMonth: data.card.expiryMonth,
+        expiryYear: data.card.expiryYear,
+
+        token: {
+          provider: "peach",
+          registrationId: data.registrationId,
+          entityId: ENTITY_ID,
+          merchantTransactionId,
+          peachTransactionId: data.id,
+          raw: null
+        },
+
+        billing: billing || null,
+
+        paymentAttempts: [paymentAttempt],
+        lastCharged: [timestamp],
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+
+      updatedCards = [...cards, newCard];
+      cardId = newCard.id;
+    } else {
+      updatedCards = cards;
+    }
+
+    await updateDoc(userRef, {
+      "paymentMethods.cards": updatedCards
+    });
+
+    /* ───── APPLY ORDER PAYMENT SUCCESS ───── */
+
+    const orderSnap = await getDocs(
+      query(
+        collection(db, "orders_v2"),
+        where("order.merchantTransactionId", "==", merchantTransactionId)
+      )
+    );
+
+    let orderId = null;
+    if (!orderSnap.empty) {
+      orderId = orderSnap.docs[0].data()?.order?.orderId || null;
+    } else {
+      const fallbackSnap = await getDocs(
+        query(
+          collection(db, "orders_v2"),
+          where("order.orderNumber", "==", merchantTransactionId)
+        )
+      );
+      if (!fallbackSnap.empty) {
+        orderId = fallbackSnap.docs[0].data()?.order?.orderId || null;
+      }
+    }
+
+    if (!orderId) {
+      throw new Error(`Order not found in orders_v2: ${merchantTransactionId}`);
+    }
 
     await applyOrderPaymentSuccess({
       orderId,
+
       provider: "peach",
       method: "card",
       chargeType: "card",
-      merchantTransactionId: orderDoc.order.merchantTransactionId,
-      peachTransactionId: peachRes.id,
-      amount_incl: Number(formattedAmount),
+
+      threeDSecureId: null,
+
+      merchantTransactionId,
+      peachTransactionId: data.id,
+
+      amount_incl: Number(amount),
       currency
     });
 
     return ok({
-      paymentId: peachRes.id,
-      registrationId: peachRes?.registrationId || null,
-      orderId,
-      documentId,
-      merchantTransactionId: orderDoc.order.merchantTransactionId
+      paymentId: data.id,
+      cardId,
+      title: "Payment Successful",
+      message: "Your payment was completed successfully.",
+      raw: data
     });
 
   } catch (e) {
     console.error("🟥 charge-card fatal error:", e);
-    return err(500, "Payment Error", e?.message || "Unexpected error.");
+    return err(
+      500,
+      "Payment Error",
+      e?.message || "Something went wrong while processing your payment."
+    );
   }
 }
