@@ -151,6 +151,7 @@ export async function GET(req, { params }) {
           status,
           gatewayLast: gateway,
           resultCode: gateway?.result?.code || "",
+          threeDSVerificationId: gateway?.threeDSecure?.verificationId || null,
           updatedAt: serverTimestamp(),
         });
         lastStatus = status;

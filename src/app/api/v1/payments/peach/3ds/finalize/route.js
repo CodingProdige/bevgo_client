@@ -21,6 +21,14 @@ const HOST = "oppwa.com";
 const ACCESS_TOKEN = process.env.PEACH_S2S_ACCESS_TOKEN;
 const ENTITY_ID = process.env.PEACH_S2S_ENTITY_ID;
 
+function detectBrand(pan) {
+  if (!pan) return "VISA";
+  if (/^4/.test(pan)) return "VISA";
+  if (/^5[1-5]/.test(pan)) return "MASTER";
+  if (/^3[47]/.test(pan)) return "AMEX";
+  return "VISA";
+}
+
 /* HTTP WRAPPER */
 function peachRequest(path, form) {
   const body = querystring.stringify(form);
@@ -56,13 +64,21 @@ function peachRequest(path, form) {
 /* ENDPOINT */
 export async function POST(req) {
   try {
-    const { threeDSecureId, orderId, amount, currency } = await req.json();
+    const {
+      threeDSecureId,
+      orderId,
+      amount,
+      currency,
+      card: bodyCard,
+      includeStandingInstruction = true,
+      createRegistration = true
+    } = await req.json();
 
     if (!threeDSecureId)
       return err(400, "Missing Reference", "threeDSecureId is required.");
 
-    if (!amount || !currency)
-      return err(400, "Missing Amount", "amount & currency required.");
+    if (!ENTITY_ID || !ACCESS_TOKEN)
+      return err(500, "Config Error", "3DS credentials not configured.");
 
     const ref = doc(db, "payment_3ds_attempts", threeDSecureId);
     const snap = await getDoc(ref);
@@ -89,30 +105,59 @@ export async function POST(req) {
         "merchantTransactionId is missing."
       );
 
-    // ⭐ card snapshot must exist
-    if (!attempt.card)
+    const finalAmount = amount || attempt?.amount;
+    const finalCurrency = currency || attempt?.currency;
+
+    if (!finalAmount || !finalCurrency)
+      return err(400, "Missing Amount", "amount & currency required.");
+
+    const card = attempt?.card || bodyCard;
+    const verificationId =
+      attempt?.gatewayLast?.threeDSecure?.verificationId ||
+      attempt?.peach?.threeDSecure?.verificationId ||
+      null;
+
+    if (!card?.number || !card?.expiryMonth || !card?.expiryYear || !card?.holder || !card?.cvv)
       return err(
         400,
         "Missing Card",
         "Card snapshot missing — initiate didn't store it."
       );
 
-    // ⭐ payment payload (Peach expects full card again)
+    // ⭐ payment payload after 3DS authentication
     const payload = {
       entityId: ENTITY_ID,
       paymentType: "DB",
-      amount,
-      currency,
-
-      paymentBrand: attempt.card.brand,
-
-      "card.number": attempt.card.number,
-      "card.expiryMonth": attempt.card.expiryMonth,
-      "card.expiryYear": attempt.card.expiryYear,
-      "card.holder": attempt.card.holder,
-
-      merchantTransactionId
+      amount: Number(finalAmount).toFixed(2),
+      currency: finalCurrency,
+      merchantTransactionId,
+      threeDSecureId,
+      transactionCategory: attempt?.transactionCategory || "EC",
+      paymentBrand: card.brand || detectBrand(card.number),
+      "card.number": card.number,
+      "card.expiryMonth": card.expiryMonth,
+      "card.expiryYear": card.expiryYear,
+      "card.holder": card.holder,
+      "card.cvv": card.cvv
     };
+
+    if (attempt?.customerIp) {
+      payload["customer.ip"] = attempt.customerIp;
+    }
+
+    if (verificationId) {
+      payload["threeDSecure.verificationId"] = verificationId;
+    }
+
+    if (createRegistration) {
+      payload.createRegistration = "true";
+    }
+
+    if (includeStandingInstruction) {
+      payload["standingInstruction.mode"] = "INITIAL";
+      payload["standingInstruction.source"] = "CIT";
+      payload["standingInstruction.type"] = "UNSCHEDULED";
+    }
 
     console.log("🔵 FINALIZE PAYLOAD →", payload);
 
@@ -131,7 +176,12 @@ export async function POST(req) {
         402,
         "Charge Failed",
         gateway?.result?.description || "Your bank declined the payment.",
-        { gateway }
+        {
+          gateway,
+          parameterErrors: gateway?.parameterErrors || null,
+          invalid: gateway?.result?.parameterErrors || null,
+          resultDetails: gateway?.resultDetails || null
+        }
       );
     }
 
@@ -139,6 +189,14 @@ export async function POST(req) {
       finalized: true,
       status: "charged",
       gatewayCharge: gateway,
+      card: {
+        brand: card.brand || detectBrand(card.number),
+        holder: card.holder,
+        expiryMonth: card.expiryMonth,
+        expiryYear: card.expiryYear,
+        last4: card.number?.slice(-4) || null
+      },
+      cardMasked: true,
       updatedAt: now()
     });
 
@@ -153,8 +211,8 @@ export async function POST(req) {
         threeDSecureId,
         merchantTransactionId,
         peachTransactionId: gateway.id,
-        amount_incl: Number(amount),
-        currency
+        amount_incl: Number(finalAmount),
+        currency: finalCurrency
       });
     }
 

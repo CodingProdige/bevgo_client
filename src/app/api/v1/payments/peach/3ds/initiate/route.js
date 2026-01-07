@@ -106,11 +106,13 @@ export async function POST(req) {
       headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
       "127.0.0.1";
 
+    const brand = detectBrand(card.number);
+
     const form = {
       entityId: ENTITY_ID_3DS,
       amount: formattedAmount,
       currency,
-      paymentBrand: detectBrand(card.number),
+      paymentBrand: brand,
       merchantTransactionId,
       transactionCategory: "EC",
 
@@ -170,6 +172,17 @@ export async function POST(req) {
         amount: formattedAmount,
         currency,
         merchantTransactionId,
+        transactionCategory: "EC",
+        customerIp: ip,
+        card: {
+          brand,
+          holder: card.holder,
+          number: card.number,
+          expiryMonth: card.expiryMonth,
+          expiryYear: card.expiryYear,
+          cvv: card.cvv,
+          last4: card.number?.slice(-4) || null
+        },
         channel: "BROWSER",
         frictionless,
         status: frictionless ? "frictionless" : "initiated",
