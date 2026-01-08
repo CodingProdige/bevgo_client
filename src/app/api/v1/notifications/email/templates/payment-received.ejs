@@ -1,0 +1,28 @@
+<h2>Payment received</h2>
+
+<p>
+  Hi <%= customerName || companyName || "there" %>,
+</p>
+
+<p>
+  We have received your payment.
+  <% if (amount && currency) { %>
+    Amount: <strong><%= amount %> <%= currency %></strong>.
+  <% } %>
+</p>
+
+<% if (orderNumber) { %>
+  <p>
+    Order reference: <strong><%= orderNumber %></strong>
+  </p>
+<% } %>
+
+
+<p style="margin-top: 16px;">
+  If you have any questions, send us an email at info@bevgo.co.za or reach us on WhatsApp at 071 619 1616.
+</p>
+
+<p style="margin-top: 20px;">
+  Cheers,<br/>
+  The Bevgo Team
+</p>

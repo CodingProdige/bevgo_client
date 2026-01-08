@@ -1,1 +1,9 @@
-<html><body><%- message %></body></html>
+<h2>Order confirmed</h2>
+<% if (typeof message !== "undefined" && message) { %>
+  <p><%- message %></p>
+<% } %>
+<% if (typeof amount !== "undefined" && typeof currency !== "undefined" && amount && currency) { %>
+  <p>
+    Total: <strong><%= amount %> <%= currency %></strong>
+  </p>
+<% } %>

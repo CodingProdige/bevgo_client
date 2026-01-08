@@ -110,6 +110,7 @@ export async function applyOrderPaymentSuccess({
     "payment.method": method,
     "payment.status": isPaid ? "paid" : "partial",
     "payment.paid_amount_incl": newPaid,
+    "payment.paymentId": peachTransactionId,
     "payment.attempts": arrayUnion(attempt),
 
     "order.status.payment": isPaid ? "paid" : "partial",

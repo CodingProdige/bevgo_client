@@ -29,6 +29,20 @@ export const emailMessages = {
       template: "order-confirmation.ejs",
       subjectTemplate: "Order <%= orderNumber %> Confirmed"
     },
+
+    "payment-received": {
+      wrapper: "corporate-wrapper.ejs",
+      template: "payment-received.ejs",
+      subjectTemplate:
+        "Payment received for <%= orderNumber || 'your order' %>"
+    },
+
+    "order-received-admin": {
+      wrapper: "corporate-wrapper.ejs",
+      template: "order-received-admin.ejs",
+      subjectTemplate:
+        "New order received: <%= orderNumber || merchantTransactionId || 'unknown reference' %>"
+    },
   
     "overdue-invoice": {
       wrapper: "corporate-wrapper.ejs",

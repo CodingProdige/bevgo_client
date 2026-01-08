@@ -1,0 +1,50 @@
+<h2>New order received</h2>
+
+<p>
+  A new order has been placed.
+</p>
+
+<% if ((typeof orderNumber !== "undefined" && orderNumber) || (typeof merchantTransactionId !== "undefined" && merchantTransactionId)) { %>
+  <p>
+    Order reference: <strong><%= (typeof orderNumber !== "undefined" && orderNumber) ? orderNumber : merchantTransactionId %></strong>
+  </p>
+<% } %>
+
+<% if (typeof companyName !== "undefined" && companyName) { %>
+  <p>
+    Company: <strong><%= companyName %></strong>
+  </p>
+<% } %>
+
+<% if ((typeof customerName !== "undefined" && customerName) || (typeof customerEmail !== "undefined" && customerEmail) ) { %>
+  <p>
+    Customer:
+    <strong><%= (typeof customerName !== "undefined" && customerName) ? customerName : "Unknown" %></strong>
+    <% if (typeof customerEmail !== "undefined" && customerEmail) { %>
+      (<%= customerEmail %>)
+    <% } %>
+  </p>
+<% } %>
+
+<% if (typeof amount !== "undefined" && typeof currency !== "undefined" && amount && currency) { %>
+  <p>
+    Order total: <strong><%= amount %> <%= currency %></strong>
+  </p>
+<% } %>
+
+<% if (typeof items !== "undefined" && items && items.length) { %>
+  <p style="margin-top: 16px;">
+    Items:
+  </p>
+  <ul>
+    <% items.forEach(item => { %>
+      <li>
+        <%= item.quantity ? `${item.quantity} x ` : "" %><%= item.name || item.title || "Item" %>
+      </li>
+    <% }) %>
+  </ul>
+<% } %>
+
+<p style="margin-top: 20px;">
+  Please review the order in the admin dashboard.
+</p>

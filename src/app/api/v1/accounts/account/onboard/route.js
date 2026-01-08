@@ -219,7 +219,8 @@ export async function POST(req) {
         accountActive,
         onboardingComplete: true,
         accountType,
-        customerCode
+        customerCode,
+        schemaVersion: 2
       },
 
       personal: personalBlock,
