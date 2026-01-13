@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import {
   doc,
+  collection,
   getDoc,
   setDoc,
   runTransaction
@@ -22,6 +23,63 @@ const err = (status, title, message, extra = {}) =>
   );
 
 const now = () => new Date().toISOString();
+
+function isRentalItem(item) {
+  const variant =
+    item?.selected_variant_snapshot ||
+    item?.selected_variant ||
+    item?.variant ||
+    {};
+  return variant?.rental?.is_rental === true;
+}
+
+function pickDefaultCard(cards = []) {
+  const active = cards.filter(
+    c => c?.status === "active" && c?.token?.registrationId
+  );
+  if (active.length === 0) return null;
+
+  const scoreDate = c => {
+    const lastCharged = Array.isArray(c.lastCharged) ? c.lastCharged.at(-1) : null;
+    return lastCharged || c.updatedAt || c.createdAt || null;
+  };
+
+  active.sort((a, b) => {
+    const aTime = new Date(scoreDate(a) || 0).getTime();
+    const bTime = new Date(scoreDate(b) || 0).getTime();
+    return bTime - aTime;
+  });
+
+  return active[0];
+}
+
+function addMonthsKeepDay(iso, months = 1) {
+  const d = new Date(iso);
+  const day = d.getDate();
+  const targetMonth = d.getMonth() + months;
+  const target = new Date(d);
+  target.setMonth(targetMonth);
+
+  if (target.getDate() < day) {
+    target.setDate(0);
+  }
+
+  return target.toISOString();
+}
+
+function normalizeBillingPeriod(value) {
+  if (!value || typeof value !== "string") return "monthly";
+  const normalized = value.trim().toLowerCase();
+  if (["daily", "weekly", "monthly", "yearly"].includes(normalized)) {
+    return normalized;
+  }
+  return "monthly";
+}
+
+function getPeriodKey(iso, billingPeriod) {
+  const date = new Date(iso);
+  return date.toISOString().slice(0, 7);
+}
 
 /* ───────────────── ENDPOINT ───────────────── */
 
@@ -186,6 +244,103 @@ export async function POST(req) {
     /* ───── Persist Order ───── */
 
     await setDoc(doc(db, "orders_v2", orderId), orderDoc);
+
+    /* ───── Create Rental Records ───── */
+
+    const rentalItems = (cart.items || []).filter(isRentalItem);
+    const defaultCard = pickDefaultCard(user.paymentMethods?.cards || []);
+
+    if (rentalItems.length > 0) {
+      const rentalsCol = collection(db, "rentals_v2");
+
+      for (const item of rentalItems) {
+        const variant =
+          item.selected_variant_snapshot ||
+          item.selected_variant ||
+          item.variant ||
+          {};
+        const product = item.product_snapshot || item.product || {};
+
+        const variantId = variant.variant_id || variant.variantId || null;
+        const productUniqueId =
+          item.product_unique_id ||
+          product?.product?.unique_id ||
+          product?.unique_id ||
+          null;
+        const productTitle =
+          product?.product?.title ||
+          product?.product_title ||
+          product?.title ||
+          product?.name ||
+          "";
+        const productImage =
+          product?.media?.hero?.url ||
+          product?.media?.image?.url ||
+          item?.media?.hero?.url ||
+          item?.media?.image?.url ||
+          null;
+        const rentalId = `${orderId}_${item.product_unique_id || "unknown"}_${variantId || "unknown"}`;
+
+        const billingPeriod = normalizeBillingPeriod(
+          variant?.rental?.billing_period
+        );
+        const periodKey = getPeriodKey(timestamp, billingPeriod);
+
+        const rentalDoc = {
+          rentalId,
+          orderId,
+          orderNumber,
+          merchantTransactionId,
+          customerId,
+
+          product: {
+            product_unique_id: productUniqueId,
+            variant_id: variantId,
+            title: productTitle,
+            image: productImage
+          },
+
+          quantity: item.qty || 1,
+
+          billing: {
+            status: defaultCard ? "pending_payment" : "pending_card",
+            cadence: billingPeriod,
+            billing_period: billingPeriod,
+            startedAt: timestamp,
+            nextChargeAt: null,
+            lastChargedAt: null,
+            currency: orderDoc.payment.currency,
+            cardId: defaultCard?.id || null,
+            cardSnapshot: defaultCard
+              ? {
+                  id: defaultCard.id,
+                  brand: defaultCard.brand,
+                  last4: defaultCard.last4,
+                  expiryMonth: defaultCard.expiryMonth,
+                  expiryYear: defaultCard.expiryYear,
+                  token: defaultCard.token || null
+                }
+              : null,
+            attempts: []
+          },
+
+          customer_snapshot: {
+            uid: customerId,
+            email: user.email || "",
+            account: user.account || {},
+            personal: user.personal || {},
+            business: user.business || {}
+          },
+
+          timestamps: {
+            createdAt: timestamp,
+            updatedAt: timestamp
+          }
+        };
+
+        await setDoc(doc(rentalsCol, rentalId), rentalDoc, { merge: true });
+      }
+    }
 
     return ok({
       orderId,

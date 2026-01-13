@@ -1,12 +1,72 @@
 import {
+  collection,
   doc,
   getDoc,
   updateDoc,
-  arrayUnion
+  arrayUnion,
+  getDocs,
+  query,
+  where
 } from "firebase/firestore";
 import { db } from "@/lib/firebaseConfig";
 
 const now = () => new Date().toISOString();
+
+function addMonthsKeepDay(iso, months = 1) {
+  const d = new Date(iso);
+  const day = d.getDate();
+  const targetMonth = d.getMonth() + months;
+  const target = new Date(d);
+  target.setMonth(targetMonth);
+  if (target.getDate() < day) target.setDate(0);
+  return target.toISOString();
+}
+
+function addYearsKeepDay(iso, years = 1) {
+  const d = new Date(iso);
+  const month = d.getMonth();
+  const day = d.getDate();
+  const target = new Date(d);
+  target.setFullYear(d.getFullYear() + years);
+  if (target.getMonth() !== month || target.getDate() < day) {
+    target.setDate(0);
+  }
+  return target.toISOString();
+}
+
+function addDays(iso, days = 1) {
+  const d = new Date(iso);
+  d.setDate(d.getDate() + days);
+  return d.toISOString();
+}
+
+function getIsoWeekKey(dateObj) {
+  const date = new Date(Date.UTC(
+    dateObj.getFullYear(),
+    dateObj.getMonth(),
+    dateObj.getDate()
+  ));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+}
+
+function getPeriodKey(billingPeriod, iso) {
+  const date = new Date(iso);
+  if (billingPeriod === "daily") return date.toISOString().slice(0, 10);
+  if (billingPeriod === "weekly") return getIsoWeekKey(date);
+  if (billingPeriod === "yearly") return date.toISOString().slice(0, 4);
+  return date.toISOString().slice(0, 7);
+}
+
+function getNextChargeAt(baseIso, billingPeriod) {
+  if (billingPeriod === "daily") return addDays(baseIso, 1);
+  if (billingPeriod === "weekly") return addDays(baseIso, 7);
+  if (billingPeriod === "yearly") return addYearsKeepDay(baseIso, 1);
+  return addMonthsKeepDay(baseIso, 1);
+}
 
 /**
  * Applies a successful payment to an order (orders_v2).
@@ -125,6 +185,60 @@ export async function applyOrderPaymentSuccess({
   }
 
   await updateDoc(orderRef, updatePayload);
+
+  /* ───────────────── UPDATE RENTALS ───────────────── */
+
+  const rentalsSnap = await getDocs(
+    query(collection(db, "rentals_v2"), where("orderId", "==", orderId))
+  );
+
+  const chargeTimestamp = now();
+
+  for (const rentalDoc of rentalsSnap.docs) {
+    const rental = rentalDoc.data();
+    const billingPeriodRaw =
+      rental?.billing?.billing_period ||
+      rental?.billing?.cadence ||
+      "monthly";
+    const billingPeriod =
+      typeof billingPeriodRaw === "string"
+        ? billingPeriodRaw.toLowerCase()
+        : "monthly";
+
+    const periodKey = getPeriodKey(billingPeriod, chargeTimestamp);
+    const attempts = Array.isArray(rental?.billing?.attempts)
+      ? rental.billing.attempts
+      : [];
+
+    const alreadyRecorded = attempts.some(
+      a => a?.paymentId === peachTransactionId
+    );
+
+    if (alreadyRecorded) {
+      continue;
+    }
+
+    const attempt = {
+      type: "charge",
+      status: "charged",
+      periodKey,
+      merchantTransactionId,
+      paymentId: peachTransactionId,
+      amount_incl: Number(amount_incl || 0),
+      currency,
+      createdAt: chargeTimestamp
+    };
+
+    const nextChargeAt = getNextChargeAt(chargeTimestamp, billingPeriod);
+
+    await updateDoc(rentalDoc.ref, {
+      "billing.status": "active",
+      "billing.lastChargedAt": chargeTimestamp,
+      "billing.nextChargeAt": nextChargeAt,
+      "billing.attempts": [...attempts, attempt],
+      "timestamps.updatedAt": chargeTimestamp
+    });
+  }
 
   /* ───────────────── UPGRADE SAVED CARD (CIT → MIT) ───────────────── */
 

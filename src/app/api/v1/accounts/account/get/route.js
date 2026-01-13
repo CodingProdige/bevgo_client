@@ -102,16 +102,9 @@ export async function POST(req) {
     const uid = isEmpty(rawUid) ? null : rawUid;
     const customerCode = isEmpty(rawCustomerCode) ? null : rawCustomerCode;
     const filters = isEmpty(rawFilters) ? null : rawFilters;
-    const page = isEmpty(rawPage) ? 1 : rawPage;
+    const paginate = !isEmpty(rawPage);
+    const page = paginate ? rawPage : 1;
     const sortOrder = isEmpty(rawSortOrder) ? "desc" : rawSortOrder;
-
-    if (!uid && !customerCode && !filters) {
-      return err(
-        400,
-        "Missing Fields",
-        "uid, customerCode, or filters is required."
-      );
-    }
 
     if (uid) {
       const ref = doc(db, "users", uid);
@@ -128,7 +121,7 @@ export async function POST(req) {
         Boolean(data?.account?.accountType);
 
       return ok({
-        data,
+        data: isNewSchema ? data : null,
         meta: {
           schemaVersion,
           isNewSchema
@@ -158,7 +151,7 @@ export async function POST(req) {
         Boolean(match?.account?.accountType);
 
       return ok({
-        data: match,
+        data: isNewSchema ? match : null,
         meta: {
           schemaVersion,
           isNewSchema
@@ -176,9 +169,10 @@ export async function POST(req) {
 
     const safePage = Number(page) > 0 ? Number(page) : 1;
     const total = filtered.length;
-    const totalPages = Math.ceil(total / PAGE_SIZE);
-    const start = (safePage - 1) * PAGE_SIZE;
-    const end = start + PAGE_SIZE;
+    const pageSize = paginate ? PAGE_SIZE : total;
+    const totalPages = total > 0 ? (paginate ? Math.ceil(total / PAGE_SIZE) : 1) : 0;
+    const start = paginate ? (safePage - 1) * PAGE_SIZE : 0;
+    const end = paginate ? start + PAGE_SIZE : total;
     const pageUsers = start < total ? filtered.slice(start, end) : [];
 
     const pages = totalPages > 0
@@ -251,7 +245,7 @@ export async function POST(req) {
       totals,
       pagination: {
         page: safePage,
-        pageSize: PAGE_SIZE,
+        pageSize,
         total,
         totalPages,
         pages,

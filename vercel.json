@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/v1/rentals/bill?dryRun=false&limit=50&concurrency=3&maxRuntimeMs=20000",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}
