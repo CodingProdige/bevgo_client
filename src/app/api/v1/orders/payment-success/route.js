@@ -174,6 +174,8 @@ export async function POST(req) {
 
     if (isPersonal) {
       updatePayload["order.editable"] = false;
+      updatePayload["order.editable_reason"] =
+        "Order is locked because payment was completed.";
       updatePayload.timestamps.lockedAt = now();
     }
 

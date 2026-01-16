@@ -91,6 +91,7 @@ export async function POST(req) {
       orderId: rawOrderId,
       orderNumber: rawOrderNumber,
       merchantTransactionId: rawMerchantTransactionId,
+      userId: rawUserId,
       filters: rawFilters,
       page: rawPage,
       sortOrder: rawSortOrder
@@ -101,6 +102,7 @@ export async function POST(req) {
     const merchantTransactionId = isEmpty(rawMerchantTransactionId)
       ? null
       : rawMerchantTransactionId;
+    const userId = isEmpty(rawUserId) ? null : rawUserId;
     const filters = isEmpty(rawFilters) ? null : rawFilters;
     const paginate = !isEmpty(rawPage);
     const page = paginate ? rawPage : 1;
@@ -153,7 +155,10 @@ export async function POST(req) {
       return ok({ data: match });
     }
 
-    const filtered = orders.filter(o => matchesFilters(o, filters));
+    const filtered = orders.filter(o => {
+      if (userId && o?.order?.customerId !== userId) return false;
+      return matchesFilters(o, filters);
+    });
 
     filtered.sort((a, b) => {
       const aTime = parseDate(a?.timestamps?.createdAt)?.getTime() || 0;
@@ -168,6 +173,10 @@ export async function POST(req) {
     const start = paginate ? (safePage - 1) * PAGE_SIZE : 0;
     const end = paginate ? start + PAGE_SIZE : total;
     const pageOrders = start < total ? filtered.slice(start, end) : [];
+    const pageOrdersWithIndex = pageOrders.map((order, i) => ({
+      ...order,
+      order_index: start + i + 1
+    }));
 
     const pages = totalPages > 0
       ? Array.from({ length: totalPages }, (_, i) => i + 1)
@@ -186,16 +195,24 @@ export async function POST(req) {
         const orderBlock = o?.order || {};
         const payment = o?.payment || {};
         const delivery = o?.delivery || {};
+        const customerSnapshot = o?.customer_snapshot || {};
 
         const paymentStatus = payment?.status || orderBlock?.status?.payment || "unknown";
         const orderStatus = orderBlock?.status?.order || "unknown";
         const fulfillmentStatus = orderBlock?.status?.fulfillment || "unknown";
 
         acc.totalOrders += 1;
+        if (fulfillmentStatus !== "delivered") acc.totalNotDelivered += 1;
+        if (orderStatus !== "completed") acc.totalNotCompleted += 1;
+        if (paymentStatus !== "paid") acc.totalPaymentNotPaid += 1;
 
         const orderType = orderBlock.type || "unknown";
         acc.orderTypeCounts[orderType] =
           (acc.orderTypeCounts[orderType] || 0) + 1;
+
+        const channel = orderBlock.channel || "unknown";
+        acc.channelCounts[channel] =
+          (acc.channelCounts[channel] || 0) + 1;
 
         acc.paymentStatusCounts[paymentStatus] =
           (acc.paymentStatusCounts[paymentStatus] || 0) + 1;
@@ -214,21 +231,47 @@ export async function POST(req) {
         acc.deliverySpeedCounts[deliverySpeed] =
           (acc.deliverySpeedCounts[deliverySpeed] || 0) + 1;
 
+        const accountType =
+          customerSnapshot?.account?.type ||
+          customerSnapshot?.account?.accountType ||
+          orderBlock?.type ||
+          "unknown";
+        acc.accountTypeCounts[accountType] =
+          (acc.accountTypeCounts[accountType] || 0) + 1;
+
+        const finalIncl = Number(o?.totals?.final_incl || 0);
+        const deliveryFeeIncl = Number(o?.totals?.delivery_fee_incl || 0);
+        const paidAmountIncl = Number(payment?.paid_amount_incl || 0);
+
+        acc.sumFinalIncl = Number((acc.sumFinalIncl + finalIncl).toFixed(2));
+        acc.sumDeliveryFeeIncl = Number(
+          (acc.sumDeliveryFeeIncl + deliveryFeeIncl).toFixed(2)
+        );
+        acc.sumPaidIncl = Number((acc.sumPaidIncl + paidAmountIncl).toFixed(2));
+
         return acc;
       },
       {
         totalOrders: 0,
+        totalNotDelivered: 0,
+        totalNotCompleted: 0,
+        totalPaymentNotPaid: 0,
         orderTypeCounts: {},
+        channelCounts: {},
         paymentStatusCounts: {},
         orderStatusCounts: {},
         fulfillmentStatusCounts: {},
         paymentMethodCounts: {},
-        deliverySpeedCounts: {}
+        deliverySpeedCounts: {},
+        accountTypeCounts: {},
+        sumFinalIncl: 0,
+        sumDeliveryFeeIncl: 0,
+        sumPaidIncl: 0
       }
     );
 
     return ok({
-      data: pageOrders,
+      data: pageOrdersWithIndex,
       totals,
       pagination: {
         page: safePage,

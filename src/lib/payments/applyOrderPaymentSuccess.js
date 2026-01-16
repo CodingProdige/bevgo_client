@@ -180,6 +180,8 @@ export async function applyOrderPaymentSuccess({
 
   if (isPersonal && isPaid) {
     updatePayload["order.editable"] = false;
+    updatePayload["order.editable_reason"] =
+      "Order is locked because payment was completed.";
     updatePayload["order.status.order"] = "confirmed";
     updatePayload["timestamps.lockedAt"] = now();
   }

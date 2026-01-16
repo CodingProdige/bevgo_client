@@ -81,6 +81,47 @@ function getPeriodKey(iso, billingPeriod) {
   return date.toISOString().slice(0, 7);
 }
 
+function normalizeDeliveryFee(input, accountType, currency) {
+  if (!input || typeof input !== "object") {
+    return {
+      amountIncl: 0,
+      amountExcl: 0,
+      vat: 0,
+      currency,
+      band: null,
+      distanceKm: null,
+      durationMinutes: null,
+      reason: "not_provided",
+      raw: null
+    };
+  }
+
+  const rawAmount =
+    input?.fee?.amount ??
+    input?.amount ??
+    0;
+  const normalizedAmount = Number(Number(rawAmount || 0).toFixed(2));
+  const amountIncl = accountType === "business"
+    ? 0
+    : normalizedAmount;
+  const amountExcl = amountIncl;
+  const vat = 0;
+
+  return {
+    amountIncl,
+    amountExcl,
+    vat,
+    currency: input?.fee?.currency || input?.currency || currency,
+    band: input?.fee?.band || input?.band || null,
+    distanceKm: input?.distance?.km ?? input?.distanceKm ?? null,
+    durationMinutes: input?.duration?.minutes ?? input?.durationMinutes ?? null,
+    reason: accountType === "business"
+      ? "business_accounts_free_delivery"
+      : input?.fee?.reason || input?.reason || "distance_band",
+    raw: input
+  };
+}
+
 /* ───────────────── ENDPOINT ───────────────── */
 
 export async function POST(req) {
@@ -91,7 +132,10 @@ export async function POST(req) {
       type = "personal",
       source = "web",
       customerNote = null,
-      deliverySpeed = "standard"
+      deliverySpeed = "standard",
+      deliveryFee = null,
+      inStoreCollection = false,
+      deliveryAddress = null
     } = await req.json();
 
     if (!cartId || !customerId) {
@@ -142,6 +186,7 @@ export async function POST(req) {
     }
 
     const user = userSnap.data();
+    const accountType = user?.account?.accountType || null;
 
     /* ───── Canonical Internal Order ID (UUID) ───── */
 
@@ -172,6 +217,23 @@ export async function POST(req) {
 
     /* ───── Build Order Document ───── */
 
+    const deliveryFeeData = normalizeDeliveryFee(
+      deliveryFee,
+      accountType,
+      "ZAR"
+    );
+
+    const totals = { ...(cart.totals || {}) };
+    totals.delivery_fee_excl = deliveryFeeData.amountExcl;
+    totals.delivery_fee_incl = deliveryFeeData.amountIncl;
+    totals.delivery_fee_vat = deliveryFeeData.vat;
+    totals.final_excl = Number(
+      (Number(totals.final_excl || 0) + deliveryFeeData.amountExcl).toFixed(2)
+    );
+    totals.final_incl = Number(
+      (Number(totals.final_incl || 0) + deliveryFeeData.amountIncl).toFixed(2)
+    );
+
     const orderDoc = {
       docId: orderId,
 
@@ -183,6 +245,7 @@ export async function POST(req) {
         type,
         channel: cart.cart?.channel || source,
         editable: true,
+        editable_reason: "Order is editable.",
         status: {
           order: "draft",
           payment: "unpaid",
@@ -191,18 +254,22 @@ export async function POST(req) {
       },
 
       items: cart.items,
-      totals: cart.totals,
+      totals,
 
       customer_snapshot: {
         customerId,
+        email: user.email || user?.personal?.email || "",
         account: user.account || {},
-        personal: user.personal || {}
+        personal: {
+          ...(user.personal || {}),
+          email: user.email || user?.personal?.email || ""
+        }
       },
 
       payment: {
         method: null,
         currency: "ZAR",
-        required_amount_incl: cart.totals.final_incl,
+        required_amount_incl: totals.final_incl ?? cart.totals.final_incl,
         paid_amount_incl: 0,
         status: "unpaid",
         attempts: []
@@ -210,14 +277,24 @@ export async function POST(req) {
 
       delivery: {
         method: "delivery",
+        in_store_collection: Boolean(inStoreCollection),
         speed: {
           type: deliverySpeed,
           eligible: isEligibleFor50,
           sla_minutes: deliverySpeed === "express_50" ? 50 : null
         },
-        address_snapshot: null,
+        address_snapshot: deliveryAddress || null,
+        fee: {
+          amount: deliveryFeeData.amountIncl,
+          currency: deliveryFeeData.currency,
+          band: deliveryFeeData.band,
+          distance_km: deliveryFeeData.distanceKm,
+          duration_minutes: deliveryFeeData.durationMinutes,
+          reason: deliveryFeeData.reason,
+          raw: deliveryFeeData.raw
+        },
         scheduledDate: null,
-        notes: null
+        notes: customerNote || null
       },
 
       delivery_docs: {

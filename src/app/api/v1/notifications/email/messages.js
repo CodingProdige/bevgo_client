@@ -30,6 +30,18 @@ export const emailMessages = {
       subjectTemplate: "Order <%= orderNumber %> Confirmed"
     },
 
+    "order-processing": {
+      wrapper: "corporate-wrapper.ejs",
+      template: "order-processing.ejs",
+      subjectTemplate: "Order <%= orderNumber || 'your order' %> is Processing"
+    },
+
+    "order-dispatched": {
+      wrapper: "corporate-wrapper.ejs",
+      template: "order-dispatched.ejs",
+      subjectTemplate: "Order <%= orderNumber || 'your order' %> Dispatched"
+    },
+
     "payment-received": {
       wrapper: "corporate-wrapper.ejs",
       template: "payment-received.ejs",

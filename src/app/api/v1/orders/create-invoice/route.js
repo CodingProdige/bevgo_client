@@ -117,6 +117,7 @@ export async function POST(req) {
       },
 
       "order.editable": false,
+      "order.editable_reason": "Order is locked because an invoice was issued.",
 
       timestamps: {
         ...(order.timestamps || {}),

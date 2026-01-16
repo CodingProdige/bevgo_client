@@ -1,6 +1,14 @@
 // app/api/deleteOrder/route.js
 import { db } from "@/lib/firebaseConfig";
-import { doc, getDoc, deleteDoc } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  deleteDoc,
+  query,
+  where
+} from "firebase/firestore";
 import { NextResponse } from "next/server";
 
 const UPDATE_STOCK_API_URL = "https://bevgo-pricelist.vercel.app/updateProductStock";
@@ -57,6 +65,18 @@ export async function POST(req) {
         deleted.push(collectionName);
         console.log(`🗑️ Deleted ${collectionName}/${orderNumber}`);
       }
+    }
+
+    // 🗑️ Delete any linked rentals_v2
+    const rentalsSnap = await getDocs(
+      query(
+        collection(db, "rentals_v2"),
+        where("orderNumber", "==", orderNumber)
+      )
+    );
+    for (const rental of rentalsSnap.docs) {
+      await deleteDoc(rental.ref);
+      console.log(`🗑️ Deleted rentals_v2/${rental.id}`);
     }
 
     if (deleted.length === 0) {

@@ -1,0 +1,11 @@
+<h2>Order processing</h2>
+<p>
+  Your order
+  <% if (typeof orderNumber !== "undefined" && orderNumber) { %>
+    <strong>#<%= orderNumber %></strong>
+  <% } %>
+  is now being prepared.
+</p>
+<% if (typeof message !== "undefined" && message) { %>
+  <p><%- message %></p>
+<% } %>

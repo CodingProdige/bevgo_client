@@ -1,0 +1,14 @@
+<h2>Order dispatched</h2>
+<p>
+  Your order
+  <% if (typeof orderNumber !== "undefined" && orderNumber) { %>
+    <strong>#<%= orderNumber %></strong>
+  <% } %>
+  has been dispatched and is on its way.
+</p>
+<% if (typeof trackingUrl !== "undefined" && trackingUrl) { %>
+  <p>Track your delivery: <a href="<%= trackingUrl %>"><%= trackingUrl %></a></p>
+<% } %>
+<% if (typeof message !== "undefined" && message) { %>
+  <p><%- message %></p>
+<% } %>
