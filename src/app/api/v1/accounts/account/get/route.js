@@ -101,7 +101,9 @@ export async function POST(req) {
 
     const uid = isEmpty(rawUid) ? null : rawUid;
     const customerCode = isEmpty(rawCustomerCode) ? null : rawCustomerCode;
-    const filters = isEmpty(rawFilters) ? null : rawFilters;
+    const filters = isEmpty(rawFilters)
+      ? { newSchemaOnly: true }
+      : rawFilters;
     const paginate = !isEmpty(rawPage);
     const page = paginate ? rawPage : 1;
     const sortOrder = isEmpty(rawSortOrder) ? "desc" : rawSortOrder;
@@ -174,6 +176,10 @@ export async function POST(req) {
     const start = paginate ? (safePage - 1) * PAGE_SIZE : 0;
     const end = paginate ? start + PAGE_SIZE : total;
     const pageUsers = start < total ? filtered.slice(start, end) : [];
+    const pageUsersWithIndex = pageUsers.map((user, i) => ({
+      ...user,
+      account_index: start + i + 1
+    }));
 
     const pages = totalPages > 0
       ? Array.from({ length: totalPages }, (_, i) => i + 1)
@@ -241,7 +247,7 @@ export async function POST(req) {
     );
 
     return ok({
-      data: pageUsers,
+      data: pageUsersWithIndex,
       totals,
       pagination: {
         page: safePage,

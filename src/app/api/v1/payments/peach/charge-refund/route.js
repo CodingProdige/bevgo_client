@@ -113,7 +113,8 @@ export async function POST(req) {
       merchantTransactionId,
       paymentId,
       amount,
-      currency
+      currency,
+      message
     } = await req.json();
 
     if (!paymentId) {
@@ -165,9 +166,11 @@ export async function POST(req) {
     }
 
     const paidAmount = Number(order?.payment?.paid_amount_incl || 0);
+    const existingRefunded = Number(order?.payment?.refunded_amount_incl || 0);
     const refundAmountInput = amount ?? paidAmount;
     const refundAmountNormalized = normalizeAmount(refundAmountInput);
     const refundCurrency = currency || order?.payment?.currency;
+    const refundMessage = String(message || "").trim();
 
     if (!refundAmountNormalized) {
       return err(400, "Invalid Amount", "Refund amount must be a number.");
@@ -225,7 +228,8 @@ export async function POST(req) {
       amount_incl: refundAmount,
       currency: refundCurrency,
       status: "refunded",
-      createdAt: now()
+      createdAt: now(),
+      ...(refundMessage ? { message: refundMessage } : {})
     };
 
     const remainingPaid = Math.max(
@@ -233,14 +237,36 @@ export async function POST(req) {
       Number((paidAmount - refundAmount).toFixed(2))
     );
     const isFullyRefunded = remainingPaid === 0;
+    const nextRefundedTotal = Number(
+      (existingRefunded + refundAmount).toFixed(2)
+    );
 
-    await updateDoc(ref, {
+    const updatePayload = {
       "payment.status": isFullyRefunded ? "refunded" : "partial_refund",
       "payment.paid_amount_incl": remainingPaid,
+      "payment.refunded_amount_incl": nextRefundedTotal,
+      "payment.refunded_currency": refundCurrency,
+      "payment.refunded_at": now(),
+      "payment.refund_count": (order?.payment?.refund_count || 0) + 1,
       "payment.attempts": [...existingAttempts, attempt],
       "order.status.payment": isFullyRefunded ? "refunded" : "partial_refund",
       "timestamps.updatedAt": now()
-    });
+    };
+
+    if (refundMessage) {
+      updatePayload["order.refund_message"] = refundMessage;
+      updatePayload["order.refund_message_at"] = now();
+    }
+
+    if (isFullyRefunded) {
+      updatePayload["order.status.order"] = "cancelled";
+      updatePayload["order.editable"] = false;
+      updatePayload["order.editable_reason"] =
+        "Order is locked because it was fully refunded.";
+      updatePayload["timestamps.lockedAt"] = order?.timestamps?.lockedAt || now();
+    }
+
+    await updateDoc(ref, updatePayload);
 
     return ok({
       orderId: snap.id,

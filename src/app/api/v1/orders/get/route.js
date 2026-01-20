@@ -33,6 +33,31 @@ function parseDate(value) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function canCancelOrder(order) {
+  const orderStatus = order?.order?.status?.order || null;
+  const paymentStatus =
+    order?.payment?.status || order?.order?.status?.payment || null;
+
+  if (
+    orderStatus === "processing" ||
+    orderStatus === "dispatched" ||
+    orderStatus === "completed" ||
+    orderStatus === "cancelled"
+  )
+    return false;
+  if (paymentStatus === "refunded" || paymentStatus === "partial_refund")
+    return false;
+
+  return true;
+}
+
+function withCancelFlag(order) {
+  return {
+    ...order,
+    can_cancel: canCancelOrder(order)
+  };
+}
+
 function matchesFilters(order, filters) {
   if (!filters) return true;
 
@@ -113,7 +138,7 @@ export async function POST(req) {
       const snap = await getDoc(ref);
 
       if (snap.exists()) {
-        return ok({ data: snap.data() });
+        return ok({ data: withCancelFlag(snap.data()) });
       }
     }
 
@@ -122,7 +147,7 @@ export async function POST(req) {
     const orders = snap.docs.map(doc => ({
       docId: doc.id,
       ...doc.data() // 🔥 FULL RAW DOCUMENT
-    }));
+    })).map(withCancelFlag);
 
     if (orderId) {
       const match = orders.find(
@@ -203,7 +228,13 @@ export async function POST(req) {
 
         acc.totalOrders += 1;
         if (fulfillmentStatus !== "delivered") acc.totalNotDelivered += 1;
-        if (orderStatus !== "completed") acc.totalNotCompleted += 1;
+        if (
+          orderStatus !== "completed" &&
+          paymentStatus !== "refunded" &&
+          paymentStatus !== "partial_refund"
+        ) {
+          acc.totalNotCompleted += 1;
+        }
         if (paymentStatus !== "paid") acc.totalPaymentNotPaid += 1;
 
         const orderType = orderBlock.type || "unknown";

@@ -126,31 +126,32 @@ export async function POST(req) {
       return ok({ data: match });
     }
 
-    if (customerId || orderId || orderNumber || merchantTransactionId) {
-      const match = rentals.filter(r => {
-        if (customerId && r?.customerId !== customerId) return false;
-        if (orderId && r?.orderId !== orderId) return false;
-        if (orderNumber && r?.orderNumber !== orderNumber) return false;
-        if (
-          merchantTransactionId &&
-          r?.merchantTransactionId !== merchantTransactionId
-        )
-          return false;
-        return true;
-      });
+    let filtered = rentals.filter(r => {
+      if (customerId && r?.customerId !== customerId) return false;
+      if (orderId && r?.orderId !== orderId) return false;
+      if (orderNumber && r?.orderNumber !== orderNumber) return false;
+      if (
+        merchantTransactionId &&
+        r?.merchantTransactionId !== merchantTransactionId
+      )
+        return false;
+      return true;
+    });
 
-      if (match.length === 0) {
-        return err(
-          404,
-          "Rental Not Found",
-          "No rentals found with the provided reference."
-        );
-      }
-
-      return ok({ data: match });
+    if (
+      (customerId || orderId || orderNumber || merchantTransactionId) &&
+      filtered.length === 0
+    ) {
+      return err(
+        404,
+        "Rental Not Found",
+        "No rentals found with the provided reference."
+      );
     }
 
-    const filtered = rentals.filter(r => matchesFilters(r, filters));
+    if (filters) {
+      filtered = filtered.filter(r => matchesFilters(r, filters));
+    }
 
     filtered.sort((a, b) => {
       const aTime = parseDate(a?.timestamps?.createdAt)?.getTime() || 0;
@@ -165,6 +166,10 @@ export async function POST(req) {
     const start = paginate ? (safePage - 1) * PAGE_SIZE : 0;
     const end = paginate ? start + PAGE_SIZE : total;
     const pageRentals = start < total ? filtered.slice(start, end) : [];
+    const pageRentalsWithIndex = pageRentals.map((rental, i) => ({
+      ...rental,
+      rental_index: start + i + 1
+    }));
 
     const pages = totalPages > 0
       ? Array.from({ length: totalPages }, (_, i) => i + 1)
@@ -204,7 +209,7 @@ export async function POST(req) {
     );
 
     return ok({
-      data: pageRentals,
+      data: pageRentalsWithIndex,
       totals,
       pagination: {
         page: safePage,
