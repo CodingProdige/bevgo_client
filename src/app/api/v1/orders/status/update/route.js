@@ -85,6 +85,10 @@ export async function POST(req) {
     }
 
     const order = snap.data();
+    const paymentStatus =
+      order?.payment?.status || order?.order?.status?.payment || null;
+    const isRefunded =
+      paymentStatus === "refunded" || paymentStatus === "partial_refund";
     const updatePayload = {
       "order.status.order": status,
       "timestamps.updatedAt": now()
@@ -92,7 +96,12 @@ export async function POST(req) {
 
     if (status === "completed" || status === "cancelled") {
       updatePayload["order.editable"] = false;
-      updatePayload["order.editable_reason"] = reason || defaultReason;
+      updatePayload["order.editable_reason"] =
+        reason || `Order locked due to being ${status}.`;
+      updatePayload["timestamps.lockedAt"] = order?.timestamps?.lockedAt || now();
+    } else if (isRefunded) {
+      updatePayload["order.editable"] = false;
+      updatePayload["order.editable_reason"] = "Order locked due to being refunded.";
       updatePayload["timestamps.lockedAt"] = order?.timestamps?.lockedAt || now();
     }
 

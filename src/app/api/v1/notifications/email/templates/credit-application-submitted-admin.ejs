@@ -1,0 +1,20 @@
+<h2>New credit application submitted</h2>
+<p>
+  <strong>Company Name:</strong> <%= companyName || "-" %><br/>
+  <strong>Customer Code:</strong> <%= typeof customerCode !== "undefined" && customerCode ? customerCode : "-" %><br/>
+  <strong>UID:</strong> <%= uid || "-" %>
+</p>
+<p>
+  <strong>Business Type:</strong> <%= businessType || "-" %><br/>
+  <strong>VAT Number:</strong> <%= vatNumber || "-" %><br/>
+  <strong>Liquor License:</strong> <%= liquorLicenseNumber || "-" %><br/>
+  <strong>Avg Monthly Spend:</strong> R<%= averageMonthlySpend || "-" %><br/>
+  <strong>Order Frequency:</strong> <%= orderFrequency || "-" %><br/>
+  <strong>Requested Credit:</strong> R<%= requestedCredit || "-" %>
+</p>
+<p>
+  <strong>Documents:</strong><br/>
+  Bank Confirmation Letter: <%= bankConfirmationLetterUrl || "-" %><br/>
+  Owner/Director ID: <%= ownerDirectorIdUrl || "-" %>
+</p>
+<p><strong>Submitted:</strong> <%= submittedAt || "-" %></p>

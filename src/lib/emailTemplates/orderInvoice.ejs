@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Invoice</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        color: #111;
+      }
+      h1, h2, h3, p { margin: 0; }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+        border-bottom: 2px solid #111;
+        padding-bottom: 12px;
+        margin-bottom: 16px;
+      }
+      .company {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .logo {
+        max-height: 64px;
+        object-fit: contain;
+      }
+      .title {
+        font-size: 20px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .meta {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .card {
+        border: 1px solid #111;
+        padding: 10px;
+        min-height: 70px;
+      }
+      .card h3 {
+        font-size: 11px;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+        letter-spacing: 0.5px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+      th, td {
+        border: 1px solid #111;
+        padding: 6px 8px;
+        text-align: left;
+      }
+      th {
+        background: #f3f3f3;
+        text-transform: uppercase;
+        font-size: 10px;
+        letter-spacing: 0.4px;
+      }
+      .right { text-align: right; }
+      .thumb {
+        width: 40px;
+        height: 40px;
+        object-fit: contain;
+        display: block;
+      }
+      .variant-wrap {
+        padding: 0;
+        border-left: 1px solid #111;
+        border-right: 1px solid #111;
+        border-bottom: 1px solid #111;
+      }
+      .variant-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #f8f8f8;
+        font-size: 11px;
+      }
+      .variant-table th,
+      .variant-table td {
+        border: none;
+        padding: 6px 8px;
+      }
+      .variant-table th {
+        text-transform: uppercase;
+        font-size: 9px;
+        letter-spacing: 0.4px;
+        color: #555;
+        border-bottom: 1px solid #e0e0e0;
+      }
+      .variant-label { font-weight: 600; }
+      .variant-sku { font-size: 10px; color: #555; }
+      .totals {
+        margin-top: 16px;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: stretch;
+      }
+      .totals table {
+        width: 320px;
+        height: 100%;
+      }
+      .bank-details {
+        width: 320px;
+        border: 1px solid #111;
+        padding: 8px 10px;
+        font-size: 11px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .footer {
+        margin-top: 16px;
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="company">
+        <img class="logo" src="<%= company.logoURL %>" alt="Company Logo" />
+        <div><%= company.name %></div>
+        <div><%= company.address %></div>
+        <div><%= company.contact %> | <%= company.email %></div>
+      </div>
+      <div class="title">Tax Invoice</div>
+    </div>
+
+    <div class="meta">
+      <div class="card">
+        <h3>Invoice</h3>
+        <p>Invoice Number: <strong><%= invoiceNumber %></strong></p>
+        <p>Order Number: <%= orderNumber %></p>
+        <p>Invoice Date: <%= invoiceDate %></p>
+        <p>Payment Method: <%= payment.method || "-" %></p>
+        <p>Payment Status: <%= payment.status || "-" %></p>
+      </div>
+      <div class="card">
+        <h3>Customer</h3>
+        <p><%= customer.name %></p>
+        <p><%= delivery.address %></p>
+        <% if (customer.customerCode) { %>
+          <p>Code: <%= customer.customerCode %></p>
+        <% } %>
+        <p><%= customer.phone %></p>
+        <p><%= customer.email %></p>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:40px;">#</th>
+          <th style="width:60px;">Image</th>
+          <th>Product</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if ((items || []).length === 0) { %>
+          <tr>
+            <td colspan="3">No items found on this order.</td>
+          </tr>
+        <% } %>
+        <% (items || []).forEach(item => { %>
+          <tr>
+            <td><%= item.index %></td>
+            <td>
+              <% if (item.imageUrl) { %>
+                <img class="thumb" src="<%= item.imageUrl %>" alt="Product" />
+              <% } else { %>
+                -
+              <% } %>
+            </td>
+            <td><%= item.title %></td>
+          </tr>
+          <tr>
+            <td colspan="3" class="variant-wrap">
+              <table class="variant-table">
+                <thead>
+                  <tr>
+                    <th style="width:40px;"></th>
+                    <th style="width:60px;"></th>
+                    <th>Variant</th>
+                    <th class="right" style="width:70px;">Qty</th>
+                    <th class="right" style="width:120px;">Unit (Excl.)</th>
+                    <th class="right" style="width:120px;">Returnables</th>
+                    <th class="right" style="width:120px;">Line Total (Incl.)</th>
+                  </tr>
+                </thead>
+                <tr>
+                  <td></td>
+                  <td></td>
+                  <td>
+                    <div class="variant-label"><%= item.variantName || "-" %></div>
+                    <% if (item.sku) { %>
+                      <div class="variant-sku"><%= item.sku %></div>
+                    <% } %>
+                  </td>
+                  <td class="right"><%= item.qty %></td>
+                  <td class="right">R<%= formatMoney(item.unitPriceExcl) %></td>
+                  <td class="right">R<%= formatMoney(item.returnableTotalExcl) %></td>
+                  <td class="right">R<%= formatMoney(item.lineTotalIncl) %></td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+
+    <div class="totals">
+      <div class="bank-details">
+        <strong>Bank Details</strong>
+        <div>Account holder: BEVGO (PTY) LTD</div>
+        <div>Account number: 1318880823</div>
+        <div>Account type: Current account</div>
+        <div>Branch code: 198765</div>
+        <div>Product type: Business Bundle 2</div>
+      </div>
+      <table>
+        <tbody>
+          <tr>
+            <td>Subtotal (Excl.)</td>
+            <td class="right">R<%= formatMoney(totals.subtotal_excl) %></td>
+          </tr>
+          <tr>
+            <td>Returnables (Excl.)</td>
+            <td class="right">R<%= formatMoney(totals.deposit_total_excl) %></td>
+          </tr>
+          <% if (creditNotes && creditNotes.totals && creditNotes.totals.incl > 0) { %>
+            <tr>
+              <td>Returnables Credit (Incl.)</td>
+              <td class="right">-R<%= formatMoney(creditNotes.totals.incl) %></td>
+            </tr>
+          <% } %>
+          <tr>
+            <td>Delivery Fee (Incl.)</td>
+            <td class="right">R<%= formatMoney(totals.delivery_fee_incl) %></td>
+          </tr>
+          <tr>
+            <td>VAT</td>
+            <td class="right">R<%= formatMoney(totals.vat_total) %></td>
+          </tr>
+          <tr>
+            <td><strong>Total (Incl.)</strong></td>
+            <td class="right"><strong>R<%= formatMoney(totals.final_incl) %></strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="footer">
+      <div>Generated: <%= new Date(generatedAt).toLocaleString() %></div>
+      <div>Paid: R<%= formatMoney(payment.paid_amount_incl) %> / Required: R<%= formatMoney(payment.required_amount_incl) %></div>
+    </div>
+  </body>
+</html>

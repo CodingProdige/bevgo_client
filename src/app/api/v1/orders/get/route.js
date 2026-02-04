@@ -5,7 +5,9 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs
+  getDocs,
+  query,
+  where
 } from "firebase/firestore";
 import { db } from "@/lib/firebaseConfig";
 
@@ -25,6 +27,17 @@ function isEmpty(value) {
   if (Array.isArray(value) && value.length === 0) return true;
   if (typeof value === "object" && Object.keys(value).length === 0) return true;
   return false;
+}
+
+async function resolveAccessType(userId) {
+  if (!userId) return null;
+  const snap = await getDoc(doc(db, "users", userId));
+  if (snap.exists()) return snap.data()?.system?.accessType || null;
+
+  const q = query(collection(db, "users"), where("uid", "==", userId));
+  const match = await getDocs(q);
+  if (match.empty) return null;
+  return match.docs[0]?.data()?.system?.accessType || null;
 }
 
 function parseDate(value) {
@@ -51,10 +64,50 @@ function canCancelOrder(order) {
   return true;
 }
 
+function buildRefundSummary(order) {
+  const payment = order?.payment || {};
+  const attempts = Array.isArray(payment.attempts) ? payment.attempts : [];
+  const entries = attempts.filter(a =>
+    a?.type === "refund" ||
+    a?.status === "refunded" ||
+    a?.refund === true ||
+    a?.refund_status
+  ).map(a => ({
+    amount_incl: Number(a?.amount_incl || 0),
+    status: a?.status || null,
+    createdAt: a?.createdAt || null,
+    originalPaymentId: a?.originalPaymentId || null,
+    provider: a?.provider || null,
+    transactionId: a?.peachTransactionId || a?.transactionId || null
+  })).sort((a, b) => {
+    const aTime = parseDate(a.createdAt)?.getTime() || 0;
+    const bTime = parseDate(b.createdAt)?.getTime() || 0;
+    return bTime - aTime;
+  }).map((entry, index) => ({
+    refund_index: index + 1,
+    ...entry
+  }));
+
+  const totalAmountIncl = entries.reduce(
+    (sum, entry) => sum + Number(entry.amount_incl || 0),
+    0
+  );
+
+  const paymentStatus = payment?.status || order?.order?.status?.payment || null;
+
+  return {
+    has_refund: entries.length > 0 || paymentStatus === "refunded",
+    status: paymentStatus === "refunded" ? "refunded" : "none",
+    total_amount_incl: Number(totalAmountIncl.toFixed(2)),
+    entries
+  };
+}
+
 function withCancelFlag(order) {
   return {
     ...order,
-    can_cancel: canCancelOrder(order)
+    can_cancel: canCancelOrder(order),
+    refund_summary: buildRefundSummary(order)
   };
 }
 
@@ -128,6 +181,8 @@ export async function POST(req) {
       ? null
       : rawMerchantTransactionId;
     const userId = isEmpty(rawUserId) ? null : rawUserId;
+    const accessType = userId ? await resolveAccessType(userId) : null;
+    const isAdmin = accessType === "admin";
     const filters = isEmpty(rawFilters) ? null : rawFilters;
     const paginate = !isEmpty(rawPage);
     const page = paginate ? rawPage : 1;
@@ -181,7 +236,7 @@ export async function POST(req) {
     }
 
     const filtered = orders.filter(o => {
-      if (userId && o?.order?.customerId !== userId) return false;
+      if (userId && !isAdmin && o?.order?.customerId !== userId) return false;
       return matchesFilters(o, filters);
     });
 

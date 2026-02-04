@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Credit Application Submitted</title>
+    <style>
+      body { margin: 0; padding: 0; font-family: Arial, sans-serif; color: #111; }
+      .container { padding: 24px; }
+      .header { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
+      .block { margin: 12px 0; }
+      .muted { color: #6b7280; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">Your credit application has been submitted</div>
+      <div class="block">Hi <%= customerName %>,</div>
+      <div class="block">
+        We’ve received your credit application for <strong><%= businessName %></strong>.
+        Our team will review it and get back to you shortly.
+      </div>
+      <div class="block">
+        <div>Requested credit: R<%= requestedCredit %></div>
+        <div>Submitted: <%= submittedAt %></div>
+      </div>
+      <div class="block muted">
+        If you need to update your documents or details, please reply to this email.
+      </div>
+    </div>
+  </body>
+</html>

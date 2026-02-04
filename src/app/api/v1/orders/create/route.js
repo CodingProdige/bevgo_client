@@ -135,7 +135,8 @@ export async function POST(req) {
       deliverySpeed = "standard",
       deliveryFee = null,
       inStoreCollection = false,
-      deliveryAddress = null
+      deliveryAddress = null,
+      onBehalfOfCustomerId = null
     } = await req.json();
 
     if (!cartId || !customerId) {
@@ -178,7 +179,9 @@ export async function POST(req) {
 
     /* ───── Load Customer ───── */
 
-    const userRef = doc(db, "users", customerId);
+    const safeOnBehalfOf = String(onBehalfOfCustomerId || "").trim();
+    const targetCustomerId = safeOnBehalfOf ? safeOnBehalfOf : customerId;
+    const userRef = doc(db, "users", targetCustomerId);
     const userSnap = await getDoc(userRef);
 
     if (!userSnap.exists()) {
@@ -187,6 +190,20 @@ export async function POST(req) {
 
     const user = userSnap.data();
     const accountType = user?.account?.accountType || null;
+    const defaultLocation = (user?.deliveryLocations || []).find(
+      loc => loc && loc.is_default === true
+    );
+    const placeholderAddress = {
+      streetAddress: "____________________",
+      city: "",
+      province: "",
+      postalCode: "",
+      instructions: ""
+    };
+    const resolvedDeliveryAddress =
+      deliveryAddress ||
+      defaultLocation ||
+      placeholderAddress;
 
     /* ───── Canonical Internal Order ID (UUID) ───── */
 
@@ -257,7 +274,7 @@ export async function POST(req) {
       totals,
 
       customer_snapshot: {
-        customerId,
+        customerId: targetCustomerId,
         email: user.email || user?.personal?.email || "",
         account: user.account || {},
         personal: {
@@ -283,7 +300,7 @@ export async function POST(req) {
           eligible: isEligibleFor50,
           sla_minutes: deliverySpeed === "express_50" ? 50 : null
         },
-        address_snapshot: deliveryAddress || null,
+        address_snapshot: resolvedDeliveryAddress || null,
         fee: {
           amount: deliveryFeeData.amountIncl,
           currency: deliveryFeeData.currency,
@@ -300,7 +317,8 @@ export async function POST(req) {
       delivery_docs: {
         picking_slip: { url: null, generatedAt: null },
         delivery_note: { url: null, generatedAt: null },
-        proof_of_delivery: { url: null, uploadedAt: null }
+        proof_of_delivery: { url: null, uploadedAt: null },
+        invoice: { url: null, uploadedAt: null }
       },
 
       audit: { edits: [] },
@@ -308,7 +326,9 @@ export async function POST(req) {
       meta: {
         source,
         customerNote,
-        createdFromCartId: cartId
+        createdFromCartId: cartId,
+        createdBy: customerId,
+        orderedFor: targetCustomerId
       },
 
       timestamps: {

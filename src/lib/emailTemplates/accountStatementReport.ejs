@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Account Statement</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        color: #111;
+      }
+      h1, h2, h3, p { margin: 0; }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+        border-bottom: 2px solid #111;
+        padding-bottom: 12px;
+        margin-bottom: 16px;
+      }
+      .company {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .logo {
+        max-height: 64px;
+        object-fit: contain;
+      }
+      .title {
+        font-size: 20px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .card {
+        border: 1px solid #111;
+        padding: 10px;
+        min-width: 240px;
+      }
+      .card h3 {
+        font-size: 11px;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+        letter-spacing: 0.5px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+      th, td {
+        border: 1px solid #111;
+        padding: 6px 8px;
+        text-align: left;
+      }
+      th {
+        background: #f3f3f3;
+        text-transform: uppercase;
+        font-size: 10px;
+        letter-spacing: 0.4px;
+      }
+      .right { text-align: right; }
+      .footer {
+        margin-top: 16px;
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+      }
+      .legend {
+        margin-top: 8px;
+        border: 1px solid #111;
+        padding: 8px 10px;
+        font-size: 11px;
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 600;
+        border: 1px solid transparent;
+      }
+      .pill-invoice { background: #eef2ff; color: #3730a3; border-color: #c7d2fe; }
+      .pill-payment { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
+      .pill-refund { background: #fff1f2; color: #9f1239; border-color: #fecdd3; }
+      .pill-credit { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="company">
+        <img class="logo" src="<%= company.logoURL %>" alt="Company Logo" />
+        <div><%= company.name %></div>
+        <div><%= company.address %></div>
+        <div><%= company.contact %> | <%= company.email %></div>
+      </div>
+      <div class="title">Account Statement</div>
+    </div>
+
+    <div class="meta">
+      <div class="card">
+        <h3>Scope</h3>
+        <p><%= scope === "all" ? "All Accounts" : "Current Account" %></p>
+        <% if (fromDate || toDate) { %>
+          <p>
+            Period:
+            <%= fromDate ? new Date(fromDate).toLocaleDateString() : "-" %>
+            to
+            <%= toDate ? new Date(toDate).toLocaleDateString() : "-" %>
+          </p>
+        <% } %>
+      </div>
+      <div class="card">
+        <h3>Summary</h3>
+        <p>Debit: R<%= formatMoney(totals.debit) %></p>
+        <p>Credit: R<%= formatMoney(totals.credit) %></p>
+        <p>Balance: R<%= formatMoney(totals.balance) %></p>
+      </div>
+    </div>
+    <div class="legend">
+      <strong>Definitions:</strong>
+      Debit (Dr) increases what is owed (invoices, refunds). Credit (Cr) reduces what is owed (payments, credit notes).
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Doc Type</th>
+          <th>Reference</th>
+          <% if (scope === "all") { %>
+            <th>Customer</th>
+            <th>Code</th>
+          <% } %>
+          <th class="right">Debit (Dr)</th>
+          <th class="right">Credit (Cr)</th>
+          <th class="right">Balance</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if ((rows || []).length === 0) { %>
+          <tr>
+            <td colspan="<%= scope === 'all' ? 8 : 6 %>">No entries found for this period.</td>
+          </tr>
+        <% } %>
+        <% (rows || []).forEach(row => { %>
+          <tr>
+            <td><%= row.date ? new Date(row.date).toLocaleDateString() : "-" %></td>
+            <td>
+              <% if (row.docType === "Invoice") { %>
+                <span class="pill pill-invoice">Invoice</span>
+              <% } else if (row.docType === "Payment") { %>
+                <span class="pill pill-payment">Payment</span>
+              <% } else if (row.docType === "Refund") { %>
+                <span class="pill pill-refund">Refund</span>
+              <% } else if (row.docType === "Credit Note") { %>
+                <span class="pill pill-credit">Credit Note</span>
+              <% } else { %>
+                <span class="pill"><%= row.docType %></span>
+              <% } %>
+            </td>
+            <td><%= row.reference %></td>
+            <% if (scope === "all") { %>
+              <td><%= row.customerName || "-" %></td>
+              <td><%= row.customerCode || "-" %></td>
+            <% } %>
+            <td class="right"><%= row.debit ? `R${formatMoney(row.debit)}` : "-" %></td>
+            <td class="right"><%= row.credit ? `R${formatMoney(row.credit)}` : "-" %></td>
+            <td class="right">R<%= formatMoney(row.balance) %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+
+    <div class="footer">
+      <div>Generated: <%= new Date(generatedAt).toLocaleString() %></div>
+      <div>Total Rows: <%= rows.length %></div>
+    </div>
+  </body>
+</html>

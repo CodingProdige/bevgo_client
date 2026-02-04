@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebaseConfig";
 
 /* ───────────────── HELPERS ───────────────── */
@@ -178,6 +178,43 @@ export async function POST(req) {
         "Order is locked because payment was completed.";
       updatePayload.timestamps.lockedAt = now();
     }
+
+    const paymentDoc = {
+      payment: {
+        method: payment.method || "card",
+        amount_incl: paidAmount,
+        remaining_amount_incl: 0,
+        currency: payment.currency,
+        status: "allocated",
+        reference: payment.peachTransactionId || null,
+        note: "Card payment captured via Peach."
+      },
+      customer: {
+        customerId: order?.order?.customerId || null,
+        customerCode: order?.customer_snapshot?.account?.customerCode || null
+      },
+      proof: {
+        type: "transaction",
+        url: null
+      },
+      allocations: [
+        {
+          orderId,
+          orderNumber: order?.order?.orderNumber || null,
+          amount_incl: paidAmount,
+          allocatedAt: now()
+        }
+      ],
+      timestamps: {
+        createdAt: now(),
+        updatedAt: now()
+      },
+      meta: {
+        createdBy: "system"
+      }
+    };
+
+    await addDoc(collection(db, "payments_v2"), paymentDoc);
 
     await updateDoc(ref, updatePayload);
 

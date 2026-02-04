@@ -1,0 +1,10 @@
+<h2>Credit application received</h2>
+<p>Hi <%= firstName || "there" %>,</p>
+<p>
+  We have received your credit application for <strong><%= companyName || "-" %></strong>.
+  Our team will review it and get back to you shortly.
+</p>
+<p>
+  Requested credit: <strong>R<%= requestedCredit || "-" %></strong><br/>
+  Submitted: <strong><%= submittedAt || "-" %></strong>
+</p>

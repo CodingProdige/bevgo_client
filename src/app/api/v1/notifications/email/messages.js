@@ -23,6 +23,18 @@ export const emailMessages = {
       template: "credit-rejected.ejs",
       subjectTemplate: "Your Credit Application Result — Ref <%= code %>"
     },
+
+    "credit-application-submitted": {
+      wrapper: "corporate-wrapper.ejs",
+      template: "credit-application-submitted.ejs",
+      subjectTemplate: "Your Bevgo Credit Application Has Been Received"
+    },
+
+    "credit-application-submitted-admin": {
+      wrapper: "corporate-wrapper.ejs",
+      template: "credit-application-submitted-admin.ejs",
+      subjectTemplate: "New Credit Application — <%= companyName %>"
+    },
   
     "order-confirmation": {
       wrapper: "corporate-wrapper.ejs",

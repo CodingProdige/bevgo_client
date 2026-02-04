@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>New Credit Application</title>
+    <style>
+      body { margin: 0; padding: 0; font-family: Arial, sans-serif; color: #111; }
+      .container { padding: 24px; }
+      .header { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
+      .block { margin: 12px 0; }
+      table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+      th, td { border: 1px solid #111; padding: 6px 8px; text-align: left; }
+      th { background: #f3f3f3; font-size: 11px; text-transform: uppercase; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">New credit application submitted</div>
+      <div class="block">
+        <div><strong>Customer:</strong> <%= customerName %></div>
+        <div><strong>Business:</strong> <%= businessName %></div>
+        <div><strong>Customer Code:</strong> <%= customerCode %></div>
+        <div><strong>UID:</strong> <%= uid %></div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Business Type</th>
+            <th>VAT Number</th>
+            <th>Liquor License</th>
+            <th>Avg Monthly Spend</th>
+            <th>Order Frequency</th>
+            <th>Requested Credit</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><%= businessType %></td>
+            <td><%= vatNumber %></td>
+            <td><%= liquorLicenseNumber %></td>
+            <td>R<%= averageMonthlySpend %></td>
+            <td><%= orderFrequency %></td>
+            <td>R<%= requestedCredit %></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="block">
+        <div><strong>Documents:</strong></div>
+        <div>Bank Confirmation Letter: <%= bankConfirmationLetterUrl %></div>
+        <div>Owner/Director ID: <%= ownerDirectorIdUrl %></div>
+      </div>
+      <div class="block">
+        <div><strong>Submitted:</strong> <%= submittedAt %></div>
+      </div>
+    </div>
+  </body>
+</html>

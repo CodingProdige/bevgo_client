@@ -220,7 +220,12 @@ export async function POST(req) {
         onboardingComplete: true,
         accountType,
         customerCode,
-        schemaVersion: 2
+        schemaVersion: 2,
+        profileColor:
+          data.account?.profileColor ??
+          data.profileColor ??
+          existing.account?.profileColor ??
+          ""
       },
 
       personal: personalBlock,

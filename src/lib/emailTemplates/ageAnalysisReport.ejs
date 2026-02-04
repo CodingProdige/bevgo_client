@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Age Analysis Report</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        color: #111;
+      }
+      h1, h2, h3, p { margin: 0; }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+        border-bottom: 2px solid #111;
+        padding-bottom: 12px;
+        margin-bottom: 16px;
+      }
+      .company {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .logo {
+        max-height: 64px;
+        object-fit: contain;
+      }
+      .title {
+        font-size: 20px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .card {
+        border: 1px solid #111;
+        padding: 10px;
+        min-width: 240px;
+      }
+      .card h3 {
+        font-size: 11px;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+        letter-spacing: 0.5px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+      th, td {
+        border: 1px solid #111;
+        padding: 6px 8px;
+        text-align: left;
+      }
+      th {
+        background: #f3f3f3;
+        text-transform: uppercase;
+        font-size: 10px;
+        letter-spacing: 0.4px;
+      }
+      .right { text-align: right; }
+      .footer {
+        margin-top: 16px;
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="company">
+        <img class="logo" src="<%= company.logoURL %>" alt="Company Logo" />
+        <div><%= company.name %></div>
+        <div><%= company.address %></div>
+        <div><%= company.contact %> | <%= company.email %></div>
+      </div>
+      <div class="title">Age Analysis Report</div>
+    </div>
+
+    <div class="meta">
+      <div class="card">
+        <h3>Scope</h3>
+        <p><%= scope === "all" ? "All Accounts" : "Current Account" %></p>
+      </div>
+      <div class="card">
+        <h3>Total Outstanding</h3>
+        <p>Balance: R<%= formatMoney(totals.balance) %></p>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Bucket</th>
+          <th class="right">Balance (Incl.)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% (buckets || []).forEach(bucket => { %>
+          <tr>
+            <td><%= bucket.label %> days</td>
+            <td class="right">R<%= formatMoney(bucket.total) %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Order</th>
+          <th>Customer</th>
+          <th>Code</th>
+          <th>Age (Days)</th>
+          <th>Bucket</th>
+          <th>Date</th>
+          <th class="right">Balance (Incl.)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if ((rows || []).length === 0) { %>
+          <tr>
+            <td colspan="7">No outstanding invoices found.</td>
+          </tr>
+        <% } %>
+        <% (rows || []).forEach(row => { %>
+          <tr>
+            <td><%= row.orderNumber %></td>
+            <td><%= row.customerName %></td>
+            <td><%= row.customerCode || "-" %></td>
+            <td><%= row.ageDays %></td>
+            <td><%= row.bucket %></td>
+            <td><%= row.createdAt ? new Date(row.createdAt).toLocaleDateString() : "-" %></td>
+            <td class="right">R<%= formatMoney(row.balance) %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+
+    <div class="footer">
+      <div>Generated: <%= new Date(generatedAt).toLocaleString() %></div>
+      <div>Total Rows: <%= rows.length %></div>
+    </div>
+  </body>
+</html>

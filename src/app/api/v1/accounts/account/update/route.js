@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { db } from "@/lib/firebaseConfig";
-import { doc, getDoc, updateDoc, collection, getDocs, query } from "firebase/firestore";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { NextResponse } from "next/server";
 
 /* -----------------------------------------
@@ -11,47 +11,12 @@ import { NextResponse } from "next/server";
 const ok  = (p={},s=200)=>NextResponse.json({ ok:true, ...p },{ status:s });
 const err = (s,t,m,e={})=>NextResponse.json({ ok:false, title:t, message:m, ...e },{ status:s });
 
-/* -----------------------------------------
-   Customer Code Generator
------------------------------------------ */
-function getInitials(name) {
-  if (!name) return "";
-  return name
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z\s]/g, "")
-    .split(/\s+/)
-    .map(w => w.charAt(0))
-    .join("")
-    .substring(0, 5);
-}
-
-function random4() {
-  return Math.floor(1000 + Math.random() * 9000).toString();
-}
-
-async function generateCustomerCode(name) {
-  const initials = getInitials(name);
-  if (!initials) throw new Error("Invalid name for customer code generation.");
-
-  const snap = await getDocs(query(collection(db, "users")));
-  const existing = new Set();
-
-  snap.forEach(d => {
-    const cc = d.data().account?.customerCode;
-    if (cc) existing.add(cc);
-  });
-
-  let attempts = 0;
-  let code = "";
-
-  do {
-    code = `${initials}${random4()}`;
-    attempts++;
-    if (attempts > 25) throw new Error("Unique code generation failed.");
-  } while (existing.has(code));
-
-  return code;
+function isEmpty(value) {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "string" && value.trim() === "") return true;
+  if (Array.isArray(value) && value.length === 0) return true;
+  if (typeof value === "object" && Object.keys(value).length === 0) return true;
+  return false;
 }
 
 /* -----------------------------------------
@@ -74,67 +39,65 @@ export async function POST(req) {
     const existing = snap.data();
     const now = new Date().toISOString();
 
-    const isPersonal = existing.account.accountType === "personal";
-    const isBusiness = existing.account.accountType === "business";
-
     /* -----------------------------------------
-       Extract Old & New Names
+       Build Update Payload (only modules provided)
     ----------------------------------------- */
-    const oldName = isPersonal
-      ? existing.personal?.fullName
-      : existing.business?.companyName;
+    const payload = {};
 
-    const newName = isPersonal
-      ? data.personal?.fullName
-      : data.business?.companyName;
-
-    /* -----------------------------------------
-       Determine if Customer Code Should Regenerate
-    ----------------------------------------- */
-    let updatedCustomerCode = existing.account.customerCode;
-
-    // Regenerate only if name changed AND new name is valid
-    if (newName && newName.trim() !== "" && newName !== oldName) {
-      updatedCustomerCode = await generateCustomerCode(newName);
+    const shouldUpdateAccount = !isEmpty(data.account);
+    if (shouldUpdateAccount) {
+      payload.account = {
+        ...(existing.account || {}),
+        ...(isEmpty(data.account) ? {} : data.account)
+      };
     }
 
-    /* -----------------------------------------
-       Build Update Payload
-       (Does NOT touch pricing, credit, violations, deliveryLocations)
-    ----------------------------------------- */
-    const payload = {
-      account: {
-        ...existing.account,
-        customerCode: updatedCustomerCode
-      },
+    if (!isEmpty(data.personal)) {
+      const personalPayload = {
+        ...(existing.personal || {}),
+        ...data.personal
+      };
+      delete personalPayload.idData;
+      payload.personal = personalPayload;
+    }
 
-      personal: isPersonal
-        ? {
-            fullName: data.personal?.fullName ?? existing.personal?.fullName,
-            phoneNumber: data.personal?.phoneNumber ?? existing.personal?.phoneNumber,
-            idData: data.personal?.idData ?? existing.personal?.idData
-          }
-        : null,
+    if (!isEmpty(data.business)) {
+      payload.business = {
+        ...(existing.business || {}),
+        ...data.business
+      };
+    }
 
-      business: isBusiness
-        ? {
-            companyName: data.business?.companyName ?? existing.business?.companyName,
-            phoneNumber: data.business?.phoneNumber ?? existing.business?.phoneNumber,
-            vatNumber: data.business?.vatNumber ?? existing.business?.vatNumber,
-            registrationNumber:
-              data.business?.registrationNumber ?? existing.business?.registrationNumber,
-            liquorLicenseNumber:
-              data.business?.liquorLicenseNumber ?? existing.business?.liquorLicenseNumber,
-            businessType:
-              data.business?.businessType ?? existing.business?.businessType
-          }
-        : null,
+    if (!isEmpty(data.media)) {
+      payload.media = {
+        ...(existing.media || {}),
+        ...data.media
+      };
+    }
 
-      system: {
-        ...existing.system,
-        updatedAt: now
-      }
+    if (!isEmpty(data.pricing)) {
+      payload.pricing = {
+        ...(existing.pricing || {}),
+        ...data.pricing
+      };
+    }
+
+    if (!isEmpty(data.credit)) {
+      payload.credit = {
+        ...(existing.credit || {}),
+        ...data.credit
+      };
+    }
+
+    payload.system = {
+      ...(existing.system || {}),
+      ...(isEmpty(data.system) ? {} : data.system),
+      updatedAt: now
     };
+
+    if (Object.keys(payload).length === 0) {
+      return err(400, "No Updates", "No valid fields provided to update.");
+    }
 
     /* -----------------------------------------
        Commit DB Update
