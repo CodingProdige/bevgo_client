@@ -12,7 +12,8 @@ const firebaseConfig = {
   appId: "1:265219789103:web:14bbe9c82d480912ef11da"
 };
 
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+const defaultApp = getApps().find(app => app.name === "[DEFAULT]");
+const app = defaultApp || initializeApp(firebaseConfig);
 
 // ✅ IMPORTANT: reuse singleton Firestore
 const db = getFirestore(app);

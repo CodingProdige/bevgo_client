@@ -103,9 +103,35 @@ function buildRefundSummary(order) {
   };
 }
 
-function withCancelFlag(order) {
+function normalizeReturns(order) {
+  const returnsModule = order?.returns || null;
+  if (!returnsModule) {
+    return {
+      ...order,
+      returns: {
+        returnables: [],
+        totals: { excl: 0, vat: 0, incl: 0 },
+        collected_returns_incl: 0
+      }
+    };
+  }
+  const returnables = Array.isArray(returnsModule.returnables)
+    ? returnsModule.returnables
+    : [];
   return {
     ...order,
+    returns: {
+      ...returnsModule,
+      returnables,
+      totals: returnsModule.totals || { excl: 0, vat: 0, incl: 0 },
+      collected_returns_incl: returnsModule.collected_returns_incl || 0
+    }
+  };
+}
+
+function withCancelFlag(order) {
+  return {
+    ...normalizeReturns(order),
     can_cancel: canCancelOrder(order),
     refund_summary: buildRefundSummary(order)
   };

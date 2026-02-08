@@ -800,6 +800,11 @@ export async function POST(req) {
 
     const items = normalizeItems(order?.items || []);
 
+    const collectedReturnsIncl = Number(
+      order?.returns?.totals?.incl || order?.totals?.collected_returns_incl || 0
+    );
+    const totalDueIncl = Number(order?.totals?.final_incl || 0) - collectedReturnsIncl;
+
     const totals = {
       subtotal_excl: Number(order?.totals?.subtotal_excl || 0),
       sale_savings_excl: Number(order?.totals?.sale_savings_excl || 0),
@@ -812,6 +817,10 @@ export async function POST(req) {
     };
 
     const formatMoney = value => Number(value || 0).toFixed(2);
+
+    const returnsList = Array.isArray(order?.returns?.returnables)
+      ? order.returns.returnables
+      : [];
 
     const renderedHTML = ejs.render(templateContent, {
       docTitle: DOCS[docType].label,
@@ -837,6 +846,7 @@ export async function POST(req) {
       qrCodeURL,
       formatMoney,
       generatedAt: now(),
+      returns: returnsList,
       payment: {
         method: order?.payment?.method || null,
         status: order?.payment?.status || null,
@@ -846,7 +856,8 @@ export async function POST(req) {
       orderNumber: order?.order?.orderNumber || snap.id,
       invoiceNumber: order?.order?.orderNumber || snap.id,
       invoiceDate: new Date(order?.timestamps?.updatedAt || now()).toLocaleDateString(),
-      creditNotes: order?.credit_notes || null
+      collectedReturnsIncl,
+      totalDueIncl
     });
 
     const pdfFileName = `${DOCS[docType].filePrefix}-${order?.order?.orderNumber || snap.id}`;

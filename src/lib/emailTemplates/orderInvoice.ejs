@@ -225,6 +225,31 @@
       </tbody>
     </table>
 
+    <% if ((returns || []).length > 0) { %>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:40px;">#</th>
+            <th>Collected Returns</th>
+            <th class="right" style="width:70px;">Qty</th>
+            <th class="right" style="width:120px;">Unit (Excl.)</th>
+            <th class="right" style="width:120px;">Line Total (Incl.)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% returns.forEach((ret, index) => { %>
+            <tr>
+              <td><%= index + 1 %></td>
+              <td><%= ret?.snapshot?.returnable?.title || ret?.snapshot?.returnable?.slug || ret?.returnableId || "-" %></td>
+              <td class="right"><%= ret?.quantity || 0 %></td>
+              <td class="right">R<%= formatMoney(ret?.unit_price_excl || 0) %></td>
+              <td class="right">R<%= formatMoney(ret?.line_total_incl || 0) %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+
     <div class="totals">
       <div class="bank-details">
         <strong>Bank Details</strong>
@@ -232,7 +257,6 @@
         <div>Account number: 1318880823</div>
         <div>Account type: Current account</div>
         <div>Branch code: 198765</div>
-        <div>Product type: Business Bundle 2</div>
       </div>
       <table>
         <tbody>
@@ -244,10 +268,10 @@
             <td>Returnables (Excl.)</td>
             <td class="right">R<%= formatMoney(totals.deposit_total_excl) %></td>
           </tr>
-          <% if (creditNotes && creditNotes.totals && creditNotes.totals.incl > 0) { %>
+          <% if (collectedReturnsIncl && collectedReturnsIncl > 0) { %>
             <tr>
-              <td>Returnables Credit (Incl.)</td>
-              <td class="right">-R<%= formatMoney(creditNotes.totals.incl) %></td>
+              <td>Collected Returns (Incl.)</td>
+              <td class="right">-R<%= formatMoney(collectedReturnsIncl) %></td>
             </tr>
           <% } %>
           <tr>
@@ -259,8 +283,8 @@
             <td class="right">R<%= formatMoney(totals.vat_total) %></td>
           </tr>
           <tr>
-            <td><strong>Total (Incl.)</strong></td>
-            <td class="right"><strong>R<%= formatMoney(totals.final_incl) %></strong></td>
+            <td><strong>Total Due (Incl.)</strong></td>
+            <td class="right"><strong>R<%= formatMoney(totalDueIncl) %></strong></td>
           </tr>
         </tbody>
       </table>
@@ -268,7 +292,11 @@
 
     <div class="footer">
       <div>Generated: <%= new Date(generatedAt).toLocaleString() %></div>
-      <div>Paid: R<%= formatMoney(payment.paid_amount_incl) %> / Required: R<%= formatMoney(payment.required_amount_incl) %></div>
+      <% if (totalDueIncl < 0) { %>
+        <div>Credited: R<%= formatMoney(Math.abs(totalDueIncl)) %></div>
+      <% } else { %>
+        <div>Paid: R<%= formatMoney(payment.paid_amount_incl) %> / Required: R<%= formatMoney(payment.required_amount_incl) %></div>
+      <% } %>
     </div>
   </body>
 </html>

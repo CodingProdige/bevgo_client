@@ -47,16 +47,6 @@ async function resolveOrderId(orderNumber) {
   return matchSnap.docs[0].id;
 }
 
-function restoreBaseTotals(totals, priorCreditTotals) {
-  if (!priorCreditTotals) return totals;
-  return {
-    ...totals,
-    vat_total: r2((totals?.vat_total || 0) + (priorCreditTotals.vat || 0)),
-    final_excl: r2((totals?.final_excl || 0) + (priorCreditTotals.excl || 0)),
-    final_incl: r2((totals?.final_incl || 0) + (priorCreditTotals.incl || 0))
-  };
-}
-
 async function fetchReturnableSnapshot(returnableId) {
   const snap = await getDoc(doc(pricingDb, "returnables_v2", returnableId));
   if (!snap.exists()) return null;
@@ -130,17 +120,16 @@ export async function POST(req) {
     }
 
     const order = snap.data();
-    const priorCreditTotals = order?.credit_notes?.totals || null;
-    const baseTotals = restoreBaseTotals(order?.totals || {}, priorCreditTotals);
-
     const snapshot = await fetchReturnableSnapshot(returnableId);
     if (!snapshot) {
       return err(404, "Returnable Not Found", "Returnable could not be located.");
     }
 
-    const existing = Array.isArray(order?.credit_notes?.returnables)
-      ? order.credit_notes.returnables
-      : [];
+    const existing = Array.isArray(order?.returns?.returnables)
+      ? order.returns.returnables
+      : Array.isArray(order?.credit_notes?.returnables)
+        ? order.credit_notes.returnables
+        : [];
 
     const key = allocationKey(returnableId, state);
     const nextAllocations = [];
@@ -225,37 +214,38 @@ export async function POST(req) {
       incl: r2(totals.incl)
     };
 
-    const nextTotals = {
-      ...baseTotals,
-      vat_total: r2((baseTotals?.vat_total || 0) - creditTotals.vat),
-      final_excl: r2((baseTotals?.final_excl || 0) - creditTotals.excl),
-      final_incl: r2((baseTotals?.final_incl || 0) - creditTotals.incl)
-    };
+    const collectedReturnsIncl = r2(creditTotals.incl);
 
-    const creditDueIncl = nextTotals.final_incl < 0
-      ? r2(Math.abs(nextTotals.final_incl))
-      : 0;
-
-    const creditNotes = allocations.length
+    const returnsModule = allocations.length
       ? {
           updatedAt: now(),
           returnables: allocations,
           totals: creditTotals,
-          credit_due_incl: creditDueIncl
+          collected_returns_incl: collectedReturnsIncl
         }
-      : null;
+      : {
+          updatedAt: now(),
+          returnables: [],
+          totals: { excl: 0, vat: 0, incl: 0 },
+          collected_returns_incl: 0
+        };
+
+    const totalsUpdate = {
+      ...order?.totals,
+      collected_returns_incl: collectedReturnsIncl
+    };
 
     await updateDoc(ref, {
-      totals: nextTotals,
-      credit_notes: creditNotes,
+      totals: totalsUpdate,
+      returns: returnsModule,
       "timestamps.updatedAt": now()
     });
 
     return ok({
       orderId: resolvedOrderId,
       orderNumber: order?.order?.orderNumber || null,
-      totals: nextTotals,
-      credit_notes: creditNotes
+      totals: totalsUpdate,
+      returns: returnsModule
     });
   } catch (e) {
     return err(
