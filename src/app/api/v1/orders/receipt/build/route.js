@@ -20,6 +20,14 @@ const err = (status = 500, title = "Server Error", message = "Unknown error") =>
 
 const LOGO_URL =
   "https://firebasestorage.googleapis.com/v0/b/bevgo-client-management-rckxs5.firebasestorage.app/o/Bevgo%20Media%2FBevgo_Main_Logo%20-%20Google%20Version%201000x500.png?alt=media&token=bf97d121-8a9b-4949-abd7-8d707f78d4a1";
+const COMPANY_DETAILS = {
+  name: "Bevgo Distributions",
+  address: "6 Christelle Str, Denneburg, Paarl, Western Cape, South Africa, 7646",
+  contact: "021 818 6153",
+  email: "info@bevgo.co.za",
+  vat: "4760314296",
+  registration: "2023/779316/07"
+};
 
 function getLineWidth(printSize) {
   if (printSize === "80") return 48;
@@ -134,6 +142,14 @@ function buildReceiptText(order, width) {
     "Formal invoice is available in the app order view.",
     width
   ).forEach(line => lines.push(line));
+  lines.push("");
+  wrapLine(COMPANY_DETAILS.name, width).forEach(line => lines.push(line));
+  wrapLine(COMPANY_DETAILS.address, width).forEach(line => lines.push(line));
+  wrapLine(`${COMPANY_DETAILS.contact} | ${COMPANY_DETAILS.email}`, width)
+    .forEach(line => lines.push(line));
+  wrapLine(`VAT No: ${COMPANY_DETAILS.vat}`, width).forEach(line => lines.push(line));
+  wrapLine(`Reg No: ${COMPANY_DETAILS.registration}`, width)
+    .forEach(line => lines.push(line));
   lines.push("");
   lines.push(padLine("Order", orderNumber, width));
   lines.push(padLine("Order Date (UTC)", formatOrderDate(createdAt), width));
@@ -334,7 +350,7 @@ function buildEscPosBuffer(text, qrValue, logoRaster) {
     content.push(Buffer.from("\n"));
   }
   content.push(alignCenter, boldOn, Buffer.from("BEVGO\n"), boldOff);
-  content.push(Buffer.from("INVOICE\n"));
+  content.push(Buffer.from("TAX INVOICE\n"));
   content.push(alignLeft);
 
   for (const line of lines) {

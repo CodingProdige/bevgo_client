@@ -139,6 +139,7 @@
         <div><%= company.name %></div>
         <div><%= company.address %></div>
         <div><%= company.contact %> | <%= company.email %></div>
+        <div>VAT No: <%= company.vat %></div>
       </div>
       <div class="title">Tax Invoice</div>
     </div>
@@ -158,6 +159,9 @@
         <p><%= delivery.address %></p>
         <% if (customer.customerCode) { %>
           <p>Code: <%= customer.customerCode %></p>
+        <% } %>
+        <% if (customerVat) { %>
+          <p>VAT No: <%= customerVat %></p>
         <% } %>
         <p><%= customer.phone %></p>
         <p><%= customer.email %></p>
@@ -268,12 +272,6 @@
             <td>Returnables (Excl.)</td>
             <td class="right">R<%= formatMoney(totals.deposit_total_excl) %></td>
           </tr>
-          <% if (collectedReturnsIncl && collectedReturnsIncl > 0) { %>
-            <tr>
-              <td>Collected Returns (Incl.)</td>
-              <td class="right">-R<%= formatMoney(collectedReturnsIncl) %></td>
-            </tr>
-          <% } %>
           <tr>
             <td>Delivery Fee (Incl.)</td>
             <td class="right">R<%= formatMoney(totals.delivery_fee_incl) %></td>
@@ -283,9 +281,25 @@
             <td class="right">R<%= formatMoney(totals.vat_total) %></td>
           </tr>
           <tr>
+            <td><strong>Total (Incl.)</strong></td>
+            <td class="right"><strong>R<%= formatMoney(totals.final_incl) %></strong></td>
+          </tr>
+          <% if (collectedReturnsIncl && collectedReturnsIncl > 0) { %>
+            <tr>
+              <td>Collected Returns (Incl.)</td>
+              <td class="right">-R<%= formatMoney(collectedReturnsIncl) %></td>
+            </tr>
+          <% } %>
+          <tr>
             <td><strong>Total Due (Incl.)</strong></td>
             <td class="right"><strong>R<%= formatMoney(totalDueIncl) %></strong></td>
           </tr>
+          <% if (totalDueIncl < 0) { %>
+            <tr>
+              <td><strong>Credited</strong></td>
+              <td class="right"><strong>R<%= formatMoney(Math.abs(totalDueIncl)) %></strong></td>
+            </tr>
+          <% } %>
         </tbody>
       </table>
     </div>

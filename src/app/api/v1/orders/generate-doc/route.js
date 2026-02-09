@@ -32,7 +32,7 @@ const now = () => new Date().toISOString();
 const COMPANY = {
   name: "Bevgo Distributions",
   address: "6 Christelle Str, Denneburg, Paarl, Western Cape, South Africa, 7646",
-  contact: "071 619 1616",
+  contact: "021 818 6153",
   email: "info@bevgo.co.za",
   vat: "4760314296",
   logoURL:
@@ -853,6 +853,11 @@ export async function POST(req) {
         required_amount_incl: Number(order?.payment?.required_amount_incl || 0),
         paid_amount_incl: Number(order?.payment?.paid_amount_incl || 0)
       },
+      customerVat:
+        order?.customer_snapshot?.account?.vatNumber ||
+        order?.customer_snapshot?.account?.vat ||
+        order?.customer_snapshot?.account?.vat_number ||
+        "",
       orderNumber: order?.order?.orderNumber || snap.id,
       invoiceNumber: order?.order?.orderNumber || snap.id,
       invoiceDate: new Date(order?.timestamps?.updatedAt || now()).toLocaleDateString(),
