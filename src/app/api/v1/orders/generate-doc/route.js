@@ -121,25 +121,52 @@ function formatAddress(address) {
 function getCustomerSnapshot(order) {
   const customer = order?.customer_snapshot || {};
   const account = customer?.account || {};
-  const personal = customer?.personal || {};
-
   const accountType = account.accountType || account.type || "";
   const isBusiness = accountType === "business";
+  const customerTypeLabel = isBusiness ? "Business" : "Personal";
 
-  const name =
-    (isBusiness && account.companyName) ||
-    personal.fullName ||
-    account.companyName ||
-    "Customer";
+  const business = customer?.business || {};
+  const personal = customer?.personal || {};
+  const defaultLocation = (customer?.deliveryLocations || []).find(
+    loc => loc && loc.is_default === true
+  );
+
+  const resolvedName = isBusiness
+    ? business?.companyName || personal?.fullName || "Customer"
+    : personal?.fullName || business?.companyName || "Customer";
+  const resolvedPhone = isBusiness
+    ? business?.phoneNumber || personal?.phoneNumber || ""
+    : personal?.phoneNumber || business?.phoneNumber || "";
 
   return {
-    name,
-    email: personal.email || "",
-    phone: personal.phoneNumber || personal.phone || "",
+    name: resolvedName,
+    email: customer?.email || "",
+    phone: resolvedPhone,
     customerCode: account.customerCode || customer.customerCode || "",
-    vat: account.vatNumber || "",
-    payment_terms: account.payment_terms || "",
-    fallbackAddress: personal.address || ""
+    vat: business?.vatNumber || account.vatNumber || "",
+    payment_terms: customer?.credit?.paymentTerms || account.payment_terms || "",
+    fallbackAddress: defaultLocation || personal.address || "",
+    customerTypeLabel,
+    business,
+    personal
+  };
+}
+
+function buildOrderSummary(totals = {}) {
+  const pricingAdjustment = Number(
+    totals?.pricing_adjustment?.amount_excl ??
+      totals?.pricing_adjustment?.amountExcl ??
+      0
+  );
+  const creditApplied = Number(totals?.credit?.applied ?? 0);
+
+  return {
+    subtotal_excl: Number(totals?.subtotal_excl || 0),
+    delivery_fee_excl: Number(totals?.delivery_fee_excl || 0),
+    vat_total: Number(totals?.vat_total || 0),
+    pricing_adjustment_excl: pricingAdjustment,
+    credit_applied_incl: creditApplied,
+    final_incl: Number(totals?.final_incl || 0)
   };
 }
 
@@ -815,6 +842,7 @@ export async function POST(req) {
       final_excl: Number(order?.totals?.final_excl || 0),
       final_incl: Number(order?.totals?.final_incl || 0)
     };
+    const summary = buildOrderSummary(order?.totals || {});
 
     const formatMoney = value => Number(value || 0).toFixed(2);
 
@@ -843,6 +871,7 @@ export async function POST(req) {
       },
       items,
       totals,
+      summary,
       qrCodeURL,
       formatMoney,
       generatedAt: now(),

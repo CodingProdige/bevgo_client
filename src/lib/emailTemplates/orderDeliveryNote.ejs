@@ -171,14 +171,37 @@
       </div>
       <div class="card" style="display:flex; align-items:center; justify-content:space-between;">
         <div>
-          <h3>Deliver To</h3>
+          <h3><%= customer.customerTypeLabel %> Customer</h3>
           <p><%= customer.name %></p>
           <p><%= delivery.address %></p>
           <% if (customer.customerCode) { %>
             <p>Code: <%= customer.customerCode %></p>
           <% } %>
-          <p><%= customer.phone %></p>
-          <p><%= customer.email %></p>
+          <% if (customer.business && customer.customerTypeLabel === "Business") { %>
+            <% if (customer.business.phoneNumber) { %>
+              <p>Phone: <%= customer.business.phoneNumber %></p>
+            <% } %>
+            <% if (customer.business.liquorLicenseNumber) { %>
+              <p>Liquor License: <%= customer.business.liquorLicenseNumber %></p>
+            <% } %>
+            <% if (customer.business.registrationNumber) { %>
+              <p>Registration No: <%= customer.business.registrationNumber %></p>
+            <% } %>
+            <% if (customer.business.businessType) { %>
+              <p>Business Type: <%= customer.business.businessType %></p>
+            <% } %>
+          <% } %>
+          <% if (customer.personal && customer.customerTypeLabel === "Personal") { %>
+            <% if (customer.personal.phoneNumber) { %>
+              <p>Phone: <%= customer.personal.phoneNumber %></p>
+            <% } %>
+          <% } %>
+          <% if (customer.phone) { %>
+            <p>Phone: <%= customer.phone %></p>
+          <% } %>
+          <% if (customer.email) { %>
+            <p>Email: <%= customer.email %></p>
+          <% } %>
         </div>
         <img class="qr" src="<%= qrCodeURL %>" alt="QR Code" />
       </div>
@@ -250,7 +273,7 @@
         <tbody>
           <tr>
             <td>Subtotal (Excl.)</td>
-            <td class="right">R<%= formatMoney(totals.subtotal_excl) %></td>
+            <td class="right">R<%= formatMoney(summary.subtotal_excl) %></td>
           </tr>
           <tr>
             <td>Sale Savings</td>
@@ -261,16 +284,28 @@
             <td class="right">R<%= formatMoney(totals.deposit_total_excl) %></td>
           </tr>
           <tr>
-            <td>Delivery Fee (Incl.)</td>
-            <td class="right">R<%= formatMoney(totals.delivery_fee_incl) %></td>
+            <td>Delivery Fee (Excl.)</td>
+            <td class="right">R<%= formatMoney(summary.delivery_fee_excl) %></td>
           </tr>
+          <% if (summary.pricing_adjustment_excl && summary.pricing_adjustment_excl > 0) { %>
+            <tr>
+              <td>Discount/Rebate (Excl.)</td>
+              <td class="right">-R<%= formatMoney(summary.pricing_adjustment_excl) %></td>
+            </tr>
+          <% } %>
+          <% if (summary.credit_applied_incl && summary.credit_applied_incl > 0) { %>
+            <tr>
+              <td>Credit Applied (Incl.)</td>
+              <td class="right">-R<%= formatMoney(summary.credit_applied_incl) %></td>
+            </tr>
+          <% } %>
           <tr>
             <td>VAT</td>
-            <td class="right">R<%= formatMoney(totals.vat_total) %></td>
+            <td class="right">R<%= formatMoney(summary.vat_total) %></td>
           </tr>
           <tr>
             <td><strong>Total (Incl.)</strong></td>
-            <td class="right"><strong>R<%= formatMoney(totals.final_incl) %></strong></td>
+            <td class="right"><strong>R<%= formatMoney(summary.final_incl) %></strong></td>
           </tr>
         </tbody>
       </table>

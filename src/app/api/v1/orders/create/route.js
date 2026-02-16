@@ -205,6 +205,7 @@ export async function POST(req) {
       defaultLocation ||
       placeholderAddress;
 
+
     /* ───── Canonical Internal Order ID (UUID) ───── */
 
     const orderId = crypto.randomUUID(); // internal, never exposed to Peach
@@ -274,13 +275,8 @@ export async function POST(req) {
       totals,
 
       customer_snapshot: {
-        customerId: targetCustomerId,
-        email: user.email || user?.personal?.email || "",
-        account: user.account || {},
-        personal: {
-          ...(user.personal || {}),
-          email: user.email || user?.personal?.email || ""
-        }
+        ...user,
+        customerId: targetCustomerId
       },
 
       payment: {

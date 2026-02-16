@@ -168,13 +168,34 @@
       </div>
       <div class="card" style="display:flex; align-items:center; justify-content:space-between;">
         <div>
-          <h3>Customer</h3>
+          <h3><%= customer.customerTypeLabel %> Customer</h3>
           <p><%= customer.name %></p>
           <p><%= delivery.address %></p>
           <% if (customer.customerCode) { %>
             <p>Code: <%= customer.customerCode %></p>
           <% } %>
-          <p><%= customer.phone %></p>
+          <% if (customer.business && customer.customerTypeLabel === "Business") { %>
+            <% if (customer.business.phoneNumber) { %>
+              <p>Phone: <%= customer.business.phoneNumber %></p>
+            <% } %>
+            <% if (customer.business.liquorLicenseNumber) { %>
+              <p>Liquor License: <%= customer.business.liquorLicenseNumber %></p>
+            <% } %>
+            <% if (customer.business.registrationNumber) { %>
+              <p>Registration No: <%= customer.business.registrationNumber %></p>
+            <% } %>
+            <% if (customer.business.businessType) { %>
+              <p>Business Type: <%= customer.business.businessType %></p>
+            <% } %>
+          <% } %>
+          <% if (customer.personal && customer.customerTypeLabel === "Personal") { %>
+            <% if (customer.personal.phoneNumber) { %>
+              <p>Phone: <%= customer.personal.phoneNumber %></p>
+            <% } %>
+          <% } %>
+          <% if (customer.phone) { %>
+            <p>Phone: <%= customer.phone %></p>
+          <% } %>
         </div>
         <img class="qr" src="<%= qrCodeURL %>" alt="QR Code" />
       </div>

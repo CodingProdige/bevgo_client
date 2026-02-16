@@ -193,62 +193,8 @@ export async function POST(req) {
     const moreBefore = Math.max(0, windowStart - 1);
     const moreAfter = Math.max(0, totalPages - windowEnd);
 
-    const totals = filtered.reduce(
-      (acc, u) => {
-        const account = u?.account || {};
-        const violations = u?.violations || {};
-        const credit = u?.credit || {};
-        const system = u?.system || {};
-        const schemaVersion = account?.schemaVersion || null;
-        const isNewSchema =
-          (typeof schemaVersion === "number" && schemaVersion >= 2) ||
-          Boolean(account?.accountType);
-
-        acc.totalAccounts += 1;
-        if (violations.isBlocked) acc.totalBlocked += 1;
-        if (violations.hasActiveViolation) acc.totalViolations += 1;
-        if (account.onboardingComplete) acc.totalOnboarded += 1;
-        if (account.accountActive) acc.totalActive += 1;
-        if (isNewSchema) acc.totalNewSchema += 1;
-
-        const accountType = account.accountType || "unknown";
-        acc.accountTypeCounts[accountType] =
-          (acc.accountTypeCounts[accountType] || 0) + 1;
-
-        const accessType = system.accessType || "unknown";
-        acc.accessTypeCounts[accessType] =
-          (acc.accessTypeCounts[accessType] || 0) + 1;
-
-        const creditApprovedKey =
-          typeof credit.creditApproved === "boolean"
-            ? String(credit.creditApproved)
-            : "unknown";
-        acc.creditApprovedCounts[creditApprovedKey] =
-          (acc.creditApprovedCounts[creditApprovedKey] || 0) + 1;
-
-        const creditStatus = credit.creditStatus || "unknown";
-        acc.creditStatusCounts[creditStatus] =
-          (acc.creditStatusCounts[creditStatus] || 0) + 1;
-
-        return acc;
-      },
-      {
-        totalAccounts: 0,
-        totalBlocked: 0,
-        totalViolations: 0,
-        totalOnboarded: 0,
-        totalActive: 0,
-        totalNewSchema: 0,
-        accountTypeCounts: {},
-        accessTypeCounts: {},
-        creditApprovedCounts: {},
-        creditStatusCounts: {}
-      }
-    );
-
     return ok({
       data: pageUsersWithIndex,
-      totals,
       pagination: {
         page: safePage,
         pageSize,

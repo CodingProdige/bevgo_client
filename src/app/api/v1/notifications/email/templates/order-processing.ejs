@@ -1,4 +1,37 @@
+<%
+  const snapshot = (typeof order !== "undefined" && order && order.customer_snapshot)
+    ? order.customer_snapshot
+    : {};
+  const accountType = snapshot?.account?.accountType || snapshot?.account?.type || "";
+  const isBusiness = accountType === "business";
+  const derivedCompanyName =
+    snapshot?.business?.companyName ||
+    snapshot?.account?.companyName ||
+    "";
+  const derivedCustomerName = isBusiness
+    ? (derivedCompanyName || snapshot?.personal?.fullName || "")
+    : (snapshot?.personal?.fullName || derivedCompanyName || "");
+  const derivedEmail =
+    snapshot?.email ||
+    snapshot?.personal?.email ||
+    "";
+  const effectiveCustomerName =
+    (typeof customerName !== "undefined" && customerName) ? customerName : derivedCustomerName;
+  const effectiveCompanyName =
+    (typeof companyName !== "undefined" && companyName) ? companyName : derivedCompanyName;
+  const effectiveCustomerEmail =
+    (typeof customerEmail !== "undefined" && customerEmail) ? customerEmail : derivedEmail;
+%>
+
 <h2>Order processing</h2>
+<% if (effectiveCustomerName || effectiveCompanyName) { %>
+  <p>
+    Customer: <strong><%= effectiveCustomerName || effectiveCompanyName %></strong>
+    <% if (effectiveCustomerEmail) { %>
+      (<%= effectiveCustomerEmail %>)
+    <% } %>
+  </p>
+<% } %>
 <p>
   Your order
   <% if (typeof orderNumber !== "undefined" && orderNumber) { %>

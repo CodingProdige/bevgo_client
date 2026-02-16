@@ -6,7 +6,11 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
+  orderBy,
   query,
+  startAfter,
+  updateDoc,
   where
 } from "firebase/firestore";
 import { db } from "@/lib/firebaseConfig";
@@ -129,11 +133,30 @@ function normalizeReturns(order) {
   };
 }
 
+function buildOrderSummary(totals = {}) {
+  const pricingAdjustment = Number(
+    totals?.pricing_adjustment?.amount_excl ??
+      totals?.pricing_adjustment?.amountExcl ??
+      0
+  );
+  const creditApplied = Number(totals?.credit?.applied ?? 0);
+
+  return {
+    subtotal_excl: Number(totals?.subtotal_excl || 0),
+    delivery_fee_excl: Number(totals?.delivery_fee_excl || 0),
+    vat_total: Number(totals?.vat_total || 0),
+    pricing_adjustment_excl: pricingAdjustment,
+    credit_applied_incl: creditApplied,
+    final_incl: Number(totals?.final_incl || 0)
+  };
+}
+
 function withCancelFlag(order) {
   return {
     ...normalizeReturns(order),
     can_cancel: canCancelOrder(order),
-    refund_summary: buildRefundSummary(order)
+    refund_summary: buildRefundSummary(order),
+    order_summary: buildOrderSummary(order?.totals)
   };
 }
 
@@ -186,6 +209,97 @@ function matchesFilters(order, filters) {
   return true;
 }
 
+function needsFullCustomerSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return true;
+  const hasUid = Boolean(snapshot.uid);
+  const hasFullSignals = Boolean(
+    snapshot.business ||
+      snapshot.deliveryLocations ||
+      snapshot.system ||
+      snapshot.preferences ||
+      snapshot.pricing ||
+      snapshot.credit
+  );
+  return !hasUid || !hasFullSignals;
+}
+
+async function ensureFullCustomerSnapshot(orderRef, orderData) {
+  const snapshot = orderData?.customer_snapshot || null;
+  if (!needsFullCustomerSnapshot(snapshot)) return orderData;
+
+  const customerId =
+    snapshot?.uid ||
+    snapshot?.customerId ||
+    orderData?.order?.customerId ||
+    null;
+
+  if (!customerId) return orderData;
+
+  const userSnap = await getDoc(doc(db, "users", customerId));
+  if (!userSnap.exists()) return orderData;
+
+  const fullUser = userSnap.data();
+  const nextOrder = {
+    ...orderData,
+    customer_snapshot: fullUser
+  };
+
+  await updateDoc(orderRef, {
+    customer_snapshot: fullUser,
+    "timestamps.updatedAt": new Date().toISOString()
+  });
+
+  return nextOrder;
+}
+
+function buildOrdersQuery({
+  userId,
+  allowAll,
+  filters,
+  sortOrder
+}) {
+  const clauses = [];
+
+  if (userId && !allowAll) {
+    clauses.push(where("order.customerId", "==", userId));
+  }
+
+  if (filters?.orderType) {
+    clauses.push(where("order.type", "==", filters.orderType));
+  }
+  if (filters?.channel) {
+    clauses.push(where("order.channel", "==", filters.channel));
+  }
+  if (filters?.paymentStatus) {
+    clauses.push(where("order.status.payment", "==", filters.paymentStatus));
+  }
+  if (filters?.orderStatus) {
+    clauses.push(where("order.status.order", "==", filters.orderStatus));
+  }
+  if (filters?.fulfillmentStatus) {
+    clauses.push(where("order.status.fulfillment", "==", filters.fulfillmentStatus));
+  }
+  if (filters?.paymentMethod) {
+    clauses.push(where("payment.method", "==", filters.paymentMethod));
+  }
+  if (filters?.deliverySpeed) {
+    clauses.push(where("delivery.speed.type", "==", filters.deliverySpeed));
+  }
+
+  if (filters?.createdFrom) {
+    const from = parseDate(filters.createdFrom);
+    if (from) clauses.push(where("timestamps.createdAt", ">=", from.toISOString()));
+  }
+  if (filters?.createdTo) {
+    const to = parseDate(filters.createdTo);
+    if (to) clauses.push(where("timestamps.createdAt", "<=", to.toISOString()));
+  }
+
+  clauses.push(orderBy("timestamps.createdAt", sortOrder === "asc" ? "asc" : "desc"));
+
+  return query(collection(db, "orders_v2"), ...clauses);
+}
+
 /* ───────── ENDPOINT ───────── */
 
 export async function POST(req) {
@@ -196,6 +310,7 @@ export async function POST(req) {
       orderNumber: rawOrderNumber,
       merchantTransactionId: rawMerchantTransactionId,
       userId: rawUserId,
+      returnAll: rawReturnAll,
       filters: rawFilters,
       page: rawPage,
       sortOrder: rawSortOrder
@@ -208,7 +323,9 @@ export async function POST(req) {
       : rawMerchantTransactionId;
     const userId = isEmpty(rawUserId) ? null : rawUserId;
     const accessType = userId ? await resolveAccessType(userId) : null;
-    const isAdmin = accessType === "admin";
+    const isAdminAccess = accessType === "admin";
+    const returnAll = rawReturnAll === true || rawReturnAll === "true";
+    const allowAll = isAdminAccess && returnAll === true;
     const filters = isEmpty(rawFilters) ? null : rawFilters;
     const paginate = !isEmpty(rawPage);
     const page = paginate ? rawPage : 1;
@@ -223,62 +340,88 @@ export async function POST(req) {
       }
     }
 
-    const snap = await getDocs(collection(db, "orders_v2"));
-
-    const orders = snap.docs.map(doc => ({
-      docId: doc.id,
-      ...doc.data() // 🔥 FULL RAW DOCUMENT
-    })).map(withCancelFlag);
-
     if (orderId) {
-      const match = orders.find(
-        o => o?.order?.orderId === orderId || o?.docId === orderId
-      );
-
-      if (!match) {
+      const ref = doc(db, "orders_v2", orderId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
         return err(404, "Order Not Found", `No order found with id: ${orderId}`);
       }
-
-      return ok({ data: match });
+      const orderData = await ensureFullCustomerSnapshot(ref, {
+        docId: snap.id,
+        ...snap.data()
+      });
+      return ok({ data: withCancelFlag(orderData) });
     }
 
     if (orderNumber || merchantTransactionId) {
-      const match = orders.find(
-        o =>
-          (orderNumber && o?.order?.orderNumber === orderNumber) ||
-          (merchantTransactionId &&
-            o?.order?.merchantTransactionId === merchantTransactionId)
+      const field = orderNumber ? "order.orderNumber" : "order.merchantTransactionId";
+      const value = orderNumber || merchantTransactionId;
+      const ref = query(
+        collection(db, "orders_v2"),
+        where(field, "==", value),
+        limit(1)
       );
-
-      if (!match) {
+      const snap = await getDocs(ref);
+      if (snap.empty) {
         return err(
           404,
           "Order Not Found",
           "No order found with the provided reference."
         );
       }
-
-      return ok({ data: match });
+      const docSnap = snap.docs[0];
+      const orderData = await ensureFullCustomerSnapshot(docSnap.ref, {
+        docId: docSnap.id,
+        ...docSnap.data()
+      });
+      return ok({ data: withCancelFlag(orderData) });
     }
 
-    const filtered = orders.filter(o => {
-      if (userId && !isAdmin && o?.order?.customerId !== userId) return false;
-      return matchesFilters(o, filters);
-    });
-
-    filtered.sort((a, b) => {
-      const aTime = parseDate(a?.timestamps?.createdAt)?.getTime() || 0;
-      const bTime = parseDate(b?.timestamps?.createdAt)?.getTime() || 0;
-      return sortOrder === "asc" ? aTime - bTime : bTime - aTime;
+    const baseQuery = buildOrdersQuery({
+      userId,
+      allowAll,
+      filters,
+      sortOrder
     });
 
     const safePage = Number(page) > 0 ? Number(page) : 1;
+    const pageSize = paginate ? PAGE_SIZE : null;
+
+    let cursorDoc = null;
+    if (paginate && safePage > 1) {
+      const cursorSnap = await getDocs(
+        query(baseQuery, limit((safePage - 1) * PAGE_SIZE))
+      );
+      cursorDoc = cursorSnap.docs[cursorSnap.docs.length - 1] || null;
+    }
+
+    const dataQuery = paginate
+      ? query(
+          baseQuery,
+          ...(cursorDoc ? [startAfter(cursorDoc)] : []),
+          limit(PAGE_SIZE)
+        )
+      : baseQuery;
+
+    const dataSnap = await getDocs(dataQuery);
+    const pageOrders = [];
+    for (const docSnap of dataSnap.docs) {
+      const hydrated = await ensureFullCustomerSnapshot(docSnap.ref, {
+        docId: docSnap.id,
+        ...docSnap.data()
+      });
+      pageOrders.push(withCancelFlag(hydrated));
+    }
+
+    const fullSnap = await getDocs(baseQuery);
+    const filtered = fullSnap.docs.map(doc => ({
+      docId: doc.id,
+      ...doc.data()
+    })).map(withCancelFlag);
+
     const total = filtered.length;
-    const pageSize = paginate ? PAGE_SIZE : total;
     const totalPages = total > 0 ? (paginate ? Math.ceil(total / PAGE_SIZE) : 1) : 0;
     const start = paginate ? (safePage - 1) * PAGE_SIZE : 0;
-    const end = paginate ? start + PAGE_SIZE : total;
-    const pageOrders = start < total ? filtered.slice(start, end) : [];
     const pageOrdersWithIndex = pageOrders.map((order, i) => ({
       ...order,
       order_index: start + i + 1

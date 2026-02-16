@@ -132,11 +132,19 @@ function buildReceiptText(order, width) {
   const lines = [];
   const orderNumber = order?.order?.orderNumber || order?.order?.orderId || "";
   const createdAt = order?.timestamps?.createdAt || new Date().toISOString();
-  const customerName =
-    order?.customer_snapshot?.account?.companyName ||
-    order?.customer_snapshot?.personal?.fullName ||
-    order?.customer_snapshot?.customerName ||
+  const customerSnapshot = order?.customer_snapshot || {};
+  const accountType =
+    customerSnapshot?.account?.accountType ||
+    customerSnapshot?.account?.type ||
     "";
+  const isBusiness = accountType === "business";
+  const customerName = isBusiness
+    ? customerSnapshot?.business?.companyName ||
+      customerSnapshot?.personal?.fullName ||
+      ""
+    : customerSnapshot?.personal?.fullName ||
+      customerSnapshot?.business?.companyName ||
+      "";
 
   wrapLine(
     "Formal invoice is available in the app order view.",
@@ -154,6 +162,23 @@ function buildReceiptText(order, width) {
   lines.push(padLine("Order", orderNumber, width));
   lines.push(padLine("Order Date (UTC)", formatOrderDate(createdAt), width));
   if (customerName) lines.push(padLine("Customer", customerName, width));
+  if (isBusiness) {
+    const business = customerSnapshot?.business || {};
+    if (business.companyName && business.companyName !== customerName) {
+      lines.push(padLine("Business", business.companyName, width));
+    }
+    if (business.phoneNumber) lines.push(padLine("Phone", business.phoneNumber, width));
+    if (business.liquorLicenseNumber) {
+      lines.push(padLine("Liquor License", business.liquorLicenseNumber, width));
+    }
+    if (business.registrationNumber) {
+      lines.push(padLine("Registration", business.registrationNumber, width));
+    }
+    if (business.businessType) {
+      lines.push(padLine("Business Type", business.businessType, width));
+    }
+    if (business.vatNumber) lines.push(padLine("VAT No", business.vatNumber, width));
+  }
   lines.push("-".repeat(width));
 
   const itemColumns = getItemColumns(width);
@@ -229,33 +254,53 @@ function buildReceiptText(order, width) {
   lines.push("-".repeat(width));
 
   const totals = order?.totals || {};
+  const pricingAdjustment = totals?.pricing_adjustment || {};
+  const pricingAdjustExcl = Number(
+    pricingAdjustment?.amount_excl ?? pricingAdjustment?.amountExcl ?? 0
+  );
+  const creditAppliedIncl = Number(totals?.credit?.applied ?? 0);
+  const pricingAdjustLabel =
+    pricingAdjustment?.type === "rebate"
+      ? "Rebate (Excl.)"
+      : pricingAdjustment?.type === "discount"
+        ? "Discount (Excl.)"
+        : "Discount/Rebate (Excl.)";
   const collectedReturnsIncl = Number(
     order?.returns?.totals?.incl || totals?.collected_returns_incl || 0
   );
   const totalDueIncl = Number(totals?.final_incl || 0) - collectedReturnsIncl;
 
-  lines.push(padLine("Total", `R${formatMoney(totals?.final_incl || 0)}`, width));
-
-  if (collectedReturnsIncl > 0) {
-    lines.push(
-      padLine("Collected Returns", `-R${formatMoney(collectedReturnsIncl)}`, width)
-    );
-    lines.push(padLine("Total Due", `R${formatMoney(totalDueIncl)}`, width));
-  }
-
-  const payment = order?.payment || {};
-  const paid = Number(payment?.paid_amount_incl || 0);
-  if (totalDueIncl < 0) {
-    lines.push(padLine("Credited", `R${formatMoney(Math.abs(totalDueIncl))}`, width));
-  } else {
-    lines.push(padLine("Paid", `R${formatMoney(paid)}`, width));
+  lines.push(padLine("Subtotal (Excl.)", `R${formatMoney(totals?.subtotal_excl || 0)}`, width));
+  lines.push(
+    padLine("Returnables (Excl.)", `R${formatMoney(totals?.deposit_total_excl || 0)}`, width)
+  );
+  lines.push(
+    padLine("Delivery Fee (Excl.)", `R${formatMoney(totals?.delivery_fee_excl || 0)}`, width)
+  );
+  if (pricingAdjustExcl > 0) {
     lines.push(
       padLine(
-        "Required",
-        `R${formatMoney(Number(payment?.required_amount_incl || 0))}`,
+        pricingAdjustLabel,
+        `-R${formatMoney(pricingAdjustExcl)}`,
         width
       )
     );
+  }
+  if (creditAppliedIncl > 0) {
+    lines.push(
+      padLine("Credit Applied (Incl.)", `-R${formatMoney(creditAppliedIncl)}`, width)
+    );
+  }
+  lines.push(padLine("VAT", `R${formatMoney(totals?.vat_total || 0)}`, width));
+  lines.push(padLine("Total (Incl.)", `R${formatMoney(totals?.final_incl || 0)}`, width));
+
+  lines.push(
+    padLine("Collected Returns (Incl.)", `-R${formatMoney(collectedReturnsIncl)}`, width)
+  );
+  lines.push(padLine("Total Due (Incl.)", `R${formatMoney(totalDueIncl)}`, width));
+
+  if (totalDueIncl < 0) {
+    lines.push(padLine("Credited", `R${formatMoney(Math.abs(totalDueIncl))}`, width));
   }
 
   lines.push("");
