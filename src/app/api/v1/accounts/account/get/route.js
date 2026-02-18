@@ -29,6 +29,26 @@ function parseDate(value) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function normalizeMedia(user) {
+  if (!user || typeof user !== "object") return user;
+  const media = user.media;
+  if (!media || typeof media !== "object") return user;
+
+  const normalizedMedia = Object.fromEntries(
+    Object.entries(media).map(([key, value]) => {
+      if (typeof value === "string" && value.trim() === "") {
+        return [key, null];
+      }
+      return [key, value];
+    })
+  );
+
+  return {
+    ...user,
+    media: normalizedMedia
+  };
+}
+
 function matchesFilters(user, filters) {
   if (!filters) return true;
 
@@ -116,7 +136,7 @@ export async function POST(req) {
         return err(404, "User Not Found", `No user found with uid: ${uid}`);
       }
 
-      const data = snap.data();
+      const data = normalizeMedia(snap.data());
       const schemaVersion = data?.account?.schemaVersion || null;
       const isNewSchema =
         (typeof schemaVersion === "number" && schemaVersion >= 2) ||
@@ -147,13 +167,14 @@ export async function POST(req) {
         );
       }
 
-      const schemaVersion = match?.account?.schemaVersion || null;
+      const normalizedMatch = normalizeMedia(match);
+      const schemaVersion = normalizedMatch?.account?.schemaVersion || null;
       const isNewSchema =
         (typeof schemaVersion === "number" && schemaVersion >= 2) ||
-        Boolean(match?.account?.accountType);
+        Boolean(normalizedMatch?.account?.accountType);
 
       return ok({
-        data: isNewSchema ? match : null,
+        data: isNewSchema ? normalizedMatch : null,
         meta: {
           schemaVersion,
           isNewSchema
@@ -177,7 +198,7 @@ export async function POST(req) {
     const end = paginate ? start + PAGE_SIZE : total;
     const pageUsers = start < total ? filtered.slice(start, end) : [];
     const pageUsersWithIndex = pageUsers.map((user, i) => ({
-      ...user,
+      ...normalizeMedia(user),
       account_index: start + i + 1
     }));
 

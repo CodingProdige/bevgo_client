@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebaseConfig";
 
 /* ───────── HELPERS ───────── */
@@ -18,23 +18,36 @@ export async function POST(req) {
   try {
     const body = await req.json().catch(() => ({}));
     const { customerId, status, page: rawPage } = body || {};
+    const normalizedCustomerId =
+      typeof customerId === "string" ? customerId.trim() : "";
+    const normalizedStatus = typeof status === "string" ? status.trim() : status;
 
-    if (!customerId) {
+    if (!normalizedCustomerId) {
       return err(400, "Missing Input", "customerId is required.");
     }
 
-    const snap = await getDocs(collection(db, "payments_v2"));
-    const payments = snap.docs.map(doc => ({
-      docId: doc.id,
-      ...doc.data()
-    })).filter(payment => {
-      if (payment?.customer?.customerId !== customerId) return false;
-      if (!status) return true;
-      const paymentStatus = payment?.payment?.status || null;
-      if (status === "unallocated_or_partial") {
-        return paymentStatus === "unallocated" || paymentStatus === "partially_allocated";
-      }
-      return paymentStatus === status;
+    const clauses = [where("customer.customerId", "==", normalizedCustomerId)];
+    if (normalizedStatus && normalizedStatus !== "unallocated_or_partial") {
+      clauses.push(where("payment.status", "==", normalizedStatus));
+    } else if (normalizedStatus === "unallocated_or_partial") {
+      clauses.push(where("payment.status", "in", ["unallocated", "partially_allocated"]));
+    }
+
+    const snap = await getDocs(query(collection(db, "payments_v2"), ...clauses));
+    const payments = snap.docs.map(doc => {
+      const data = doc.data() || {};
+      const paymentDate =
+        data?.payment?.date ||
+        data?.timestamps?.createdAt ||
+        null;
+      return {
+        docId: doc.id,
+        ...data,
+        payment: {
+          ...(data.payment || {}),
+          date: paymentDate
+        }
+      };
     }).sort((a, b) => {
       const aTime = new Date(a?.timestamps?.createdAt || 0).getTime();
       const bTime = new Date(b?.timestamps?.createdAt || 0).getTime();

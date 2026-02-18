@@ -33,6 +33,7 @@ function parseDate(value) {
 
 function getCustomerId(order) {
   return (
+    order?.meta?.orderedFor ||
     order?.order?.customerId ||
     order?.customer_snapshot?.customerId ||
     order?.customer_snapshot?.uid ||
@@ -54,9 +55,15 @@ function getCustomerCode(order) {
 function matchesCustomer(order, userId, customerCode) {
   const orderCustomerId = getCustomerId(order);
   const snapshotCustomerId = order?.customer_snapshot?.customerId || null;
+  const orderedFor = order?.meta?.orderedFor || null;
   const accountCode = getCustomerCode(order);
 
-  if (userId && orderCustomerId !== userId && snapshotCustomerId !== userId)
+  if (
+    userId &&
+    orderCustomerId !== userId &&
+    snapshotCustomerId !== userId &&
+    orderedFor !== userId
+  )
     return false;
 
   if (customerCode) {
@@ -141,6 +148,86 @@ function getRefundIncl(order) {
   return toNum(order?.payment?.paid_amount_incl);
 }
 
+function getOutstandingIncl(order) {
+  const paymentStatus =
+    order?.payment?.status || order?.order?.status?.payment || "unknown";
+  const orderStatus = order?.order?.status?.order || "unknown";
+
+  if (paymentStatus === "refunded" || paymentStatus === "partial_refund") return 0;
+  if (orderStatus === "cancelled") return 0;
+
+  const required = getFinalPayableIncl(order);
+  const paid = toNum(order?.payment?.paid_amount_incl);
+  return Number(Math.max(required - paid, 0).toFixed(2));
+}
+
+function getCollectedReturnsIncl(order) {
+  const totals = order?.totals || {};
+  const returnsModule = order?.returns || {};
+  return toNum(
+    returnsModule?.collected_returns_incl ??
+      returnsModule?.totals?.incl ??
+      totals?.collected_returns_incl ??
+      0
+  );
+}
+
+function getFinalPayableIncl(order) {
+  const existing = Number(order?.totals?.final_payable_incl);
+  if (Number.isFinite(existing)) return existing;
+
+  const finalIncl = toNum(order?.totals?.final_incl);
+  const collectedReturnsIncl = getCollectedReturnsIncl(order);
+  return Number((finalIncl - collectedReturnsIncl).toFixed(2));
+}
+
+function getCollectibleFinalIncl(order) {
+  const paymentStatus =
+    order?.payment?.status || order?.order?.status?.payment || "unknown";
+  const orderStatus = order?.order?.status?.order || "unknown";
+  if (orderStatus === "cancelled") return 0;
+  if (paymentStatus === "refunded" || paymentStatus === "partial_refund") return 0;
+  return getFinalPayableIncl(order);
+}
+
+function withFinalPayableTotal(order) {
+  const totals = order?.totals || {};
+  const finalPayableIncl = getFinalPayableIncl(order);
+
+  return {
+    ...order,
+    totals: {
+      ...totals,
+      final_payable_incl: finalPayableIncl
+    }
+  };
+}
+
+function withIndexedPaymentHistory(order) {
+  const payment = order?.payment || {};
+  const attempts = Array.isArray(payment?.attempts)
+    ? payment.attempts.map((attempt, index) => ({
+        payment_attempt_index: index + 1,
+        ...attempt
+      }))
+    : [];
+  const manualPayments = Array.isArray(payment?.manual_payments)
+    ? payment.manual_payments.map((entry, index) => ({
+        manual_payment_index: index + 1,
+        ...entry
+      }))
+    : [];
+
+  return {
+    ...order,
+    payment: {
+      ...payment,
+      attempts,
+      manual_payments: manualPayments
+    }
+  };
+}
+
 function pctChange(current, previous) {
   if (!previous) return "→ +0%";
   const value = (((current - previous) / previous) * 100);
@@ -214,18 +301,22 @@ function buildTotals(orders) {
       acc.accountTypeCounts[accountType] =
         (acc.accountTypeCounts[accountType] || 0) + 1;
 
-      const finalIncl = toNum(o?.totals?.final_incl);
+      const finalIncl = getCollectibleFinalIncl(o);
       const deliveryFeeIncl = toNum(o?.totals?.delivery_fee_incl);
       const paidAmountIncl = toNum(payment?.paid_amount_incl);
       const refundAmountIncl = toNum(payment?.refund_amount_incl);
       const refundFallbackIncl =
         paymentStatus === "refunded" ? paidAmountIncl : 0;
+      const outstandingIncl = getOutstandingIncl(o);
 
       acc.sumFinalIncl = Number((acc.sumFinalIncl + finalIncl).toFixed(2));
       acc.sumDeliveryFeeIncl = Number(
         (acc.sumDeliveryFeeIncl + deliveryFeeIncl).toFixed(2)
       );
       acc.sumPaidIncl = Number((acc.sumPaidIncl + paidAmountIncl).toFixed(2));
+      acc.totalOutstandingIncl = Number(
+        (acc.totalOutstandingIncl + outstandingIncl).toFixed(2)
+      );
       acc.sumRefundedIncl = Number(
         (acc.sumRefundedIncl + (refundAmountIncl || refundFallbackIncl)).toFixed(2)
       );
@@ -250,6 +341,7 @@ function buildTotals(orders) {
       sumFinalIncl: 0,
       sumDeliveryFeeIncl: 0,
       sumPaidIncl: 0,
+      totalOutstandingIncl: 0,
       sumRefundedIncl: 0
     }
   );
@@ -287,7 +379,7 @@ function buildMonthlySeries(orders, months = 12, offsetMonths = 0) {
     const idx = indexByKey.get(key);
     if (idx === undefined) continue;
 
-    const finalIncl = toNum(order?.totals?.final_incl);
+    const finalIncl = getCollectibleFinalIncl(order);
     const paidIncl = toNum(order?.payment?.paid_amount_incl);
     const refundIncl = getRefundIncl(order);
 
@@ -336,7 +428,7 @@ function buildDailySeries(orders, startDate) {
     const idx = indexByKey.get(key);
     if (idx === undefined) continue;
 
-    const finalIncl = toNum(order?.totals?.final_incl);
+    const finalIncl = getCollectibleFinalIncl(order);
     const paidIncl = toNum(order?.payment?.paid_amount_incl);
     const refundIncl = getRefundIncl(order);
 
@@ -576,10 +668,14 @@ export async function POST(req) {
     }
 
     const orderSnap = await getDocs(collection(db, "orders_v2"));
-    const orders = orderSnap.docs.map(doc => ({
-      docId: doc.id,
-      ...doc.data()
-    }));
+    const orders = orderSnap.docs.map(doc =>
+      withIndexedPaymentHistory(
+        withFinalPayableTotal({
+          docId: doc.id,
+          ...doc.data()
+        })
+      )
+    );
 
     const rentalSnap = await getDocs(collection(db, "rentals_v2"));
     const rentals = rentalSnap.docs.map(doc => ({
@@ -689,32 +785,37 @@ export async function POST(req) {
         orderCount: 0,
         sumFinalIncl: 0,
         sumPaidIncl: 0,
-        sumRefundedIncl: 0
+        sumRefundedIncl: 0,
+        sumOutstandingIncl: 0
       },
       previousMonth: {
         orderCount: 0,
         sumFinalIncl: 0,
         sumPaidIncl: 0,
-        sumRefundedIncl: 0
+        sumRefundedIncl: 0,
+        sumOutstandingIncl: 0
       },
       last12Months: {
         orderCount: 0,
         sumFinalIncl: 0,
         sumPaidIncl: 0,
-        sumRefundedIncl: 0
+        sumRefundedIncl: 0,
+        sumOutstandingIncl: 0
       },
       previous12Months: {
         orderCount: 0,
         sumFinalIncl: 0,
         sumPaidIncl: 0,
-        sumRefundedIncl: 0
+        sumRefundedIncl: 0,
+        sumOutstandingIncl: 0
       }
     };
 
     for (const order of filtered) {
       const createdAt = parseDate(order?.timestamps?.createdAt);
-      const finalIncl = toNum(order?.totals?.final_incl);
+      const finalIncl = getCollectibleFinalIncl(order);
       const paidIncl = toNum(order?.payment?.paid_amount_incl);
+      const outstandingIncl = getOutstandingIncl(order);
       const paymentStatus =
         order?.payment?.status || order?.order?.status?.payment || "unknown";
       const refundIncl =
@@ -737,6 +838,9 @@ export async function POST(req) {
           spend.currentMonth.sumRefundedIncl = Number(
             ((spend.currentMonth.sumRefundedIncl || 0) + refundIncl).toFixed(2)
           );
+          spend.currentMonth.sumOutstandingIncl = Number(
+            ((spend.currentMonth.sumOutstandingIncl || 0) + outstandingIncl).toFixed(2)
+          );
         } else if (createdAt >= startOfPrevMonth && createdAt < startOfMonth) {
           spend.previousMonth.orderCount += 1;
           spend.previousMonth.sumFinalIncl = Number(
@@ -747,6 +851,9 @@ export async function POST(req) {
           );
           spend.previousMonth.sumRefundedIncl = Number(
             ((spend.previousMonth.sumRefundedIncl || 0) + refundIncl).toFixed(2)
+          );
+          spend.previousMonth.sumOutstandingIncl = Number(
+            ((spend.previousMonth.sumOutstandingIncl || 0) + outstandingIncl).toFixed(2)
           );
         }
 
@@ -761,6 +868,9 @@ export async function POST(req) {
           spend.last12Months.sumRefundedIncl = Number(
             ((spend.last12Months.sumRefundedIncl || 0) + refundIncl).toFixed(2)
           );
+          spend.last12Months.sumOutstandingIncl = Number(
+            ((spend.last12Months.sumOutstandingIncl || 0) + outstandingIncl).toFixed(2)
+          );
         } else if (createdAt >= startOfPrevYear && createdAt < startOfYear) {
           spend.previous12Months.orderCount += 1;
           spend.previous12Months.sumFinalIncl = Number(
@@ -771,6 +881,9 @@ export async function POST(req) {
           );
           spend.previous12Months.sumRefundedIncl = Number(
             ((spend.previous12Months.sumRefundedIncl || 0) + refundIncl).toFixed(2)
+          );
+          spend.previous12Months.sumOutstandingIncl = Number(
+            ((spend.previous12Months.sumOutstandingIncl || 0) + outstandingIncl).toFixed(2)
           );
         }
       }
@@ -805,6 +918,10 @@ export async function POST(req) {
             sumRefundedIncl: pctChange(
               spend.currentMonth.sumRefundedIncl,
               spend.previousMonth.sumRefundedIncl
+            ),
+            sumOutstandingIncl: pctChange(
+              spend.currentMonth.sumOutstandingIncl,
+              spend.previousMonth.sumOutstandingIncl
             )
           }
         },
@@ -826,6 +943,10 @@ export async function POST(req) {
             sumRefundedIncl: pctChange(
               spend.last12Months.sumRefundedIncl,
               spend.previous12Months.sumRefundedIncl
+            ),
+            sumOutstandingIncl: pctChange(
+              spend.last12Months.sumOutstandingIncl,
+              spend.previous12Months.sumOutstandingIncl
             )
           }
         },
@@ -845,6 +966,10 @@ export async function POST(req) {
           sumRefundedIncl: pctChange(
             spend.currentMonth.sumRefundedIncl,
             spend.previousMonth.sumRefundedIncl
+          ),
+          sumOutstandingIncl: pctChange(
+            spend.currentMonth.sumOutstandingIncl,
+            spend.previousMonth.sumOutstandingIncl
           )
         },
         yearChangePct: {
@@ -863,6 +988,10 @@ export async function POST(req) {
           sumRefundedIncl: pctChange(
             spend.last12Months.sumRefundedIncl,
             spend.previous12Months.sumRefundedIncl
+          ),
+          sumOutstandingIncl: pctChange(
+            spend.last12Months.sumOutstandingIncl,
+            spend.previous12Months.sumOutstandingIncl
           )
         }
       },

@@ -6,11 +6,35 @@ import { ensureCartItemKey } from "./keyManager";
 import { buildUiMessage } from "./uiMessage";
 
 const nowIso = () => new Date().toISOString();
+const r2 = (v) => Number((Number(v) || 0).toFixed(2));
 
 const allowedModes = ["add", "increment", "decrement", "set", "remove"];
 
 function clone(obj) {
   return obj ? JSON.parse(JSON.stringify(obj)) : obj;
+}
+
+function rebuildTotalsWithDelivery(order, items) {
+  const baseTotals = computeCartTotals(items);
+  const existingTotals = order?.totals || {};
+
+  const deliveryFeeExcl = Number(existingTotals?.delivery_fee_excl || 0);
+  const deliveryFeeIncl = Number(existingTotals?.delivery_fee_incl || 0);
+  const deliveryFeeVat = Number(
+    existingTotals?.delivery_fee_vat ??
+      Math.max(deliveryFeeIncl - deliveryFeeExcl, 0)
+  );
+
+  return {
+    ...existingTotals,
+    ...baseTotals,
+    delivery_fee_excl: r2(deliveryFeeExcl),
+    delivery_fee_incl: r2(deliveryFeeIncl),
+    delivery_fee_vat: r2(deliveryFeeVat),
+    vat_total: r2(Number(baseTotals?.vat_total || 0) + deliveryFeeVat),
+    final_excl: r2(Number(baseTotals?.final_excl || 0) + deliveryFeeExcl),
+    final_incl: r2(Number(baseTotals?.final_incl || 0) + deliveryFeeIncl)
+  };
 }
 
 const makeCartItemKey = (productId, variantId) =>
@@ -87,7 +111,7 @@ export async function updateOrderAtomic(tx, body) {
      shortcut remove if requested and nothing to delete
   ------------------------------------------------------- */
   if (mode === "remove" && !existingItem) {
-    const totals = computeCartTotals(items);
+    const totals = rebuildTotalsWithDelivery(order, items);
     const finalOrder = {
       ...order,
       items,
@@ -479,7 +503,7 @@ export async function updateOrderAtomic(tx, body) {
   /* -------------------------------------------------------
      recompute totals + persist
   ------------------------------------------------------- */
-  const totals = computeCartTotals(items);
+  const totals = rebuildTotalsWithDelivery(order, items);
 
   const finalOrder = {
     ...order,

@@ -14,6 +14,11 @@ const err = (status = 500, title = "Server Error", message = "Unknown error") =>
 
 const now = () => new Date().toISOString();
 const r2 = v => Number((Number(v) || 0).toFixed(2));
+const toIsoOrNull = value => {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+};
 
 function computeStatus(amountIncl, allocatedIncl) {
   if (allocatedIncl <= 0) return "unallocated";
@@ -83,6 +88,11 @@ export async function POST(req) {
       updatePayload["payment.reference"] = payment.reference || null;
     if (payment?.note !== undefined)
       updatePayload["payment.note"] = payment.note || null;
+    if (payment?.date !== undefined || payment?.paymentDate !== undefined) {
+      updatePayload["payment.date"] = toIsoOrNull(
+        payment?.date ?? payment?.paymentDate
+      );
+    }
 
     if (proof !== undefined) {
       updatePayload.proof = proof && typeof proof === "object"

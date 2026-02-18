@@ -133,6 +133,52 @@ function normalizeReturns(order) {
   };
 }
 
+function withFinalPayableTotal(order) {
+  const totals = order?.totals || {};
+  const returnsModule = order?.returns || {};
+  const collectedReturnsIncl = Number(
+    returnsModule?.collected_returns_incl ??
+      returnsModule?.totals?.incl ??
+      totals?.collected_returns_incl ??
+      0
+  );
+  const finalIncl = Number(totals?.final_incl || 0);
+  const finalPayableIncl = Number((finalIncl - collectedReturnsIncl).toFixed(2));
+
+  return {
+    ...order,
+    totals: {
+      ...totals,
+      final_payable_incl: finalPayableIncl
+    }
+  };
+}
+
+function withIndexedPaymentHistory(order) {
+  const payment = order?.payment || {};
+  const attempts = Array.isArray(payment?.attempts)
+    ? payment.attempts.map((attempt, index) => ({
+        payment_attempt_index: index + 1,
+        ...attempt
+      }))
+    : [];
+  const manualPayments = Array.isArray(payment?.manual_payments)
+    ? payment.manual_payments.map((entry, index) => ({
+        manual_payment_index: index + 1,
+        ...entry
+      }))
+    : [];
+
+  return {
+    ...order,
+    payment: {
+      ...payment,
+      attempts,
+      manual_payments: manualPayments
+    }
+  };
+}
+
 function buildOrderSummary(totals = {}) {
   const pricingAdjustment = Number(
     totals?.pricing_adjustment?.amount_excl ??
@@ -152,11 +198,14 @@ function buildOrderSummary(totals = {}) {
 }
 
 function withCancelFlag(order) {
+  const normalizedOrder = withIndexedPaymentHistory(
+    withFinalPayableTotal(normalizeReturns(order))
+  );
   return {
-    ...normalizeReturns(order),
-    can_cancel: canCancelOrder(order),
-    refund_summary: buildRefundSummary(order),
-    order_summary: buildOrderSummary(order?.totals)
+    ...normalizedOrder,
+    can_cancel: canCancelOrder(normalizedOrder),
+    refund_summary: buildRefundSummary(normalizedOrder),
+    order_summary: buildOrderSummary(normalizedOrder?.totals)
   };
 }
 
@@ -261,7 +310,11 @@ function buildOrdersQuery({
   const clauses = [];
 
   if (userId && !allowAll) {
-    clauses.push(where("order.customerId", "==", userId));
+    clauses.push(where("meta.orderedFor", "==", userId));
+  }
+
+  if (filters?.customerId) {
+    clauses.push(where("order.customerId", "==", filters.customerId));
   }
 
   if (filters?.orderType) {
@@ -497,12 +550,26 @@ export async function POST(req) {
         const finalIncl = Number(o?.totals?.final_incl || 0);
         const deliveryFeeIncl = Number(o?.totals?.delivery_fee_incl || 0);
         const paidAmountIncl = Number(payment?.paid_amount_incl || 0);
+        const requiredAmountIncl = Number(
+          o?.payment?.required_amount_incl ??
+          o?.totals?.final_incl ??
+          0
+        );
+        const outstandingIncl =
+          paymentStatus === "refunded" ||
+          paymentStatus === "partial_refund" ||
+          orderStatus === "cancelled"
+            ? 0
+            : Math.max(requiredAmountIncl - paidAmountIncl, 0);
 
         acc.sumFinalIncl = Number((acc.sumFinalIncl + finalIncl).toFixed(2));
         acc.sumDeliveryFeeIncl = Number(
           (acc.sumDeliveryFeeIncl + deliveryFeeIncl).toFixed(2)
         );
         acc.sumPaidIncl = Number((acc.sumPaidIncl + paidAmountIncl).toFixed(2));
+        acc.totalOutstandingIncl = Number(
+          (acc.totalOutstandingIncl + outstandingIncl).toFixed(2)
+        );
 
         return acc;
       },
@@ -521,7 +588,8 @@ export async function POST(req) {
         accountTypeCounts: {},
         sumFinalIncl: 0,
         sumDeliveryFeeIncl: 0,
-        sumPaidIncl: 0
+        sumPaidIncl: 0,
+        totalOutstandingIncl: 0
       }
     );
 

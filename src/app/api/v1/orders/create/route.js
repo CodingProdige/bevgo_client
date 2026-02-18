@@ -259,7 +259,7 @@ export async function POST(req) {
         orderId,
         orderNumber,
         merchantTransactionId,
-        customerId,
+        customerId: targetCustomerId,
         type,
         channel: cart.cart?.channel || source,
         editable: true,
@@ -384,7 +384,7 @@ export async function POST(req) {
           orderId,
           orderNumber,
           merchantTransactionId,
-          customerId,
+          customerId: targetCustomerId,
 
           product: {
             product_unique_id: productUniqueId,
@@ -418,7 +418,7 @@ export async function POST(req) {
           },
 
           customer_snapshot: {
-            uid: customerId,
+            uid: targetCustomerId,
             email: user.email || "",
             account: user.account || {},
             personal: user.personal || {},

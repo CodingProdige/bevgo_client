@@ -14,6 +14,11 @@ const err = (status = 500, title = "Server Error", message = "Unknown error") =>
 
 const now = () => new Date().toISOString();
 const r2 = v => Number((Number(v) || 0).toFixed(2));
+const toIsoOrNull = value => {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+};
 
 /* ───────── ENDPOINT ───────── */
 
@@ -31,6 +36,7 @@ export async function POST(req) {
     const method = String(payment?.method || "").trim();
     const currency = String(payment?.currency || "ZAR").trim();
     const amountIncl = Number(payment?.amount_incl);
+    const paymentDateIso = toIsoOrNull(payment?.date ?? payment?.paymentDate);
 
     if (!customerId) {
       return err(400, "Missing Input", "customerId is required.");
@@ -56,6 +62,7 @@ export async function POST(req) {
         remaining_amount_incl: r2(amountIncl),
         currency,
         status: "unallocated",
+        date: paymentDateIso || timestamp,
         reference: payment?.reference || null,
         note: payment?.note || null
       },
