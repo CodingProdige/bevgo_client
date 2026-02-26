@@ -4,5 +4,15 @@
       "path": "/api/v1/rentals/bill?dryRun=false&limit=50&concurrency=3&maxRuntimeMs=20000",
       "schedule": "*/5 * * * *"
     }
+  ],
+    "redirects": [
+    {
+      "source": "/",
+      "has": [
+        { "type": "host", "value": "shop.bevgo.co.za" }
+      ],
+      "destination": "https://client-portal.bevgo.co.za",
+      "permanent": true
+    }
   ]
 }

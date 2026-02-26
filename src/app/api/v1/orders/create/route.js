@@ -9,6 +9,7 @@ import {
   runTransaction
 } from "firebase/firestore";
 import { db } from "@/lib/firebaseConfig";
+import { evaluateDeliveryArea } from "@/lib/deliveryAreaCheck";
 import crypto from "crypto";
 
 /* ───────────────── HELPERS ───────────────── */
@@ -205,6 +206,23 @@ export async function POST(req) {
       defaultLocation ||
       placeholderAddress;
 
+    /* ───── Validate general delivery area support ───── */
+
+    if (!inStoreCollection) {
+      const deliveryAreaCheck = evaluateDeliveryArea(resolvedDeliveryAddress);
+      if (!deliveryAreaCheck.supported) {
+        return err(
+          400,
+          "Delivery Area Not Supported",
+          deliveryAreaCheck.message,
+          {
+            supported: false,
+            canPlaceOrder: false,
+            reasonCode: deliveryAreaCheck.reasonCode
+          }
+        );
+      }
+    }
 
     /* ───── Canonical Internal Order ID (UUID) ───── */
 

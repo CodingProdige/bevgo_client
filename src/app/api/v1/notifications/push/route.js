@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import admin from "firebase-admin";
+import { pushTemplates } from "./messages";
 
 /* ---------------------------------------------
    LOAD SERVICE ACCOUNT FROM ENV
@@ -24,6 +25,7 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 const messaging = admin.messaging();
+const FCM_BATCH_LIMIT = 500;
 
 /* ---------------------------------------------
    FETCH USER TOKENS (Admin SDK syntax)
@@ -50,14 +52,45 @@ async function getUserTokens(uid) {
   }
 }
 
+async function getAllTokens() {
+  try {
+    const snap = await db.collectionGroup("fcm_tokens").get();
+    const tokens = [];
+    snap.forEach(doc => {
+      const data = doc.data() || {};
+      const token = data.fcm_token || data.token || null;
+      if (token) tokens.push(token);
+    });
+    return Array.from(new Set(tokens));
+  } catch (e) {
+    console.error("❌ GLOBAL TOKEN FETCH ERROR:", e);
+    return [];
+  }
+}
+
+async function getManyUserTokens(uids = []) {
+  const results = await Promise.all(uids.map(uid => getUserTokens(uid)));
+  const all = results.flat();
+  return Array.from(new Set(all));
+}
+
 /* ---------------------------------------------
    MESSAGE TEMPLATES
 --------------------------------------------- */
-function buildMessage(type, vars) {
-  if (type === "order-dispatched") {
+function interpolate(template = "", vars = {}) {
+  return String(template).replace(/{{\s*([\w.-]+)\s*}}/g, (_, key) => {
+    const value = vars?.[key];
+    return value === undefined || value === null ? "" : String(value);
+  });
+}
+
+function buildMessage(type, vars = {}) {
+  const tpl = pushTemplates?.[type];
+  if (tpl) {
     return {
-      title: "Your Order Is On The Way 🚚",
-      body: `Order ${vars.orderId} has been dispatched and is on route.`
+      title: interpolate(tpl.title, vars),
+      body: interpolate(tpl.body, vars),
+      link: interpolate(tpl.link || "", vars)
     };
   }
 
@@ -67,25 +100,49 @@ function buildMessage(type, vars) {
   };
 }
 
+function normalizeDataPayload(data = {}) {
+  const out = {};
+  for (const [k, v] of Object.entries(data || {})) {
+    if (v === undefined || v === null) continue;
+    if (typeof v === "string") out[k] = v;
+    else if (typeof v === "number" || typeof v === "boolean") out[k] = String(v);
+    else out[k] = JSON.stringify(v);
+  }
+  return out;
+}
+
 /* ---------------------------------------------
    SEND PUSH
 --------------------------------------------- */
-async function sendPush(tokens, message) {
+async function sendPush(tokens, payload) {
   try {
-    const payload = {
-      notification: message,
-      data: {
-        link: message.link ?? ""
-      }
+    let successCount = 0;
+    let failureCount = 0;
+    const responses = [];
+
+    for (let i = 0; i < tokens.length; i += FCM_BATCH_LIMIT) {
+      const batch = tokens.slice(i, i + FCM_BATCH_LIMIT);
+      const res = await messaging.sendEachForMulticast({
+        tokens: batch,
+        ...payload
+      });
+      successCount += res.successCount || 0;
+      failureCount += res.failureCount || 0;
+      responses.push({
+        batchIndex: Math.floor(i / FCM_BATCH_LIMIT) + 1,
+        tokenCount: batch.length,
+        successCount: res.successCount || 0,
+        failureCount: res.failureCount || 0
+      });
+    }
+
+    const aggregate = {
+      successCount,
+      failureCount,
+      responses
     };
-
-    const res = await messaging.sendEachForMulticast({
-      tokens,
-      ...payload
-    });
-
-    console.log("📨 FCM RESPONSE:", res);
-    return res;
+    console.log("📨 FCM RESPONSE:", aggregate);
+    return aggregate;
   } catch (e) {
     console.error("❌ PUSH SEND ERROR:", e);
     throw e;
@@ -98,30 +155,82 @@ async function sendPush(tokens, message) {
 export async function POST(req) {
   console.log("🟡 PUSH ROUTE LOADED");
 
-  const body = await req.json();
-  const { uid, type, variables } = body;
+  const body = await req.json().catch(() => ({}));
+  const {
+    uid,
+    uids,
+    global = false,
+    type,
+    variables,
+    notification,
+    data,
+    deeplink,
+    link,
+    includeTokens = false
+  } = body || {};
 
   console.log("📩 PUSH REQUEST:", body);
 
-  const tokens = await getUserTokens(uid);
+  if (!global && !uid && !(Array.isArray(uids) && uids.length > 0)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        title: "Missing Target",
+        message: "Provide one of: uid, uids[], or global=true.",
+        devicesReceived: 0,
+        devicesFailed: 0
+      },
+      { status: 400 }
+    );
+  }
+
+  let tokens = [];
+  if (global) tokens = await getAllTokens();
+  else if (uid) tokens = await getUserTokens(uid);
+  else tokens = await getManyUserTokens(uids);
 
   if (!tokens.length) {
     return NextResponse.json({
       ok: false,
       title: "No Device Tokens",
-      message: "User has no registered device tokens."
+      message: "No registered device tokens found for the requested target.",
+      devicesReceived: 0,
+      devicesFailed: 0
     });
   }
 
-  const msg = buildMessage(type, variables);
-  const providerResp = await sendPush(tokens, msg);
+  const templateMsg = buildMessage(type, variables || {});
+  const deepLink = deeplink || link || notification?.link || templateMsg?.link || "";
+  const payloadData = normalizeDataPayload({
+    ...(data || {}),
+    ...(type ? { template: type } : {}),
+    ...(deepLink ? { link: deepLink, deeplink: deepLink } : {})
+  });
+  const payloadNotification = {
+    title: notification?.title || templateMsg.title,
+    body: notification?.body || templateMsg.body
+  };
+  if (notification?.imageUrl) payloadNotification.imageUrl = notification.imageUrl;
+
+  const payload = {
+    notification: payloadNotification,
+    data: payloadData
+  };
+
+  const providerResp = await sendPush(tokens, payload);
 
   return NextResponse.json({
     ok: true,
     uid,
+    uids: Array.isArray(uids) ? uids : undefined,
+    global,
     tokensSent: tokens.length,
-    tokens,
-    message: msg,
+    devicesReceived: providerResp?.successCount ?? 0,
+    devicesFailed: providerResp?.failureCount ?? 0,
+    ...(includeTokens ? { tokens } : {}),
+    message: payloadNotification,
+    deeplink: deepLink || null,
+    data: payloadData,
     providerResp,
     sentAt: new Date().toISOString()
   });

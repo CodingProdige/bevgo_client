@@ -34,6 +34,10 @@ function normalizeAmount(value) {
   };
 }
 
+function isBlank(value) {
+  return value === null || value === undefined || String(value).trim() === "";
+}
+
 /* ───────── ENV ───────── */
 
 const ACCESS_TOKEN = process.env.PEACH_S2S_ACCESS_TOKEN;
@@ -112,6 +116,7 @@ export async function POST(req) {
       orderNumber,
       merchantTransactionId,
       paymentId,
+      refundRequestId,
       amount,
       currency,
       message
@@ -153,21 +158,46 @@ export async function POST(req) {
     const existingAttempts = Array.isArray(order?.payment?.attempts)
       ? order.payment.attempts
       : [];
+    const paymentStatus =
+      order?.payment?.status || order?.order?.status?.payment || null;
 
-    const alreadyRefunded = existingAttempts.some(
-      a => a?.type === "refund" && a?.originalPaymentId === paymentId
-    );
+    // Optional idempotency key: if this exact refund request was already processed,
+    // return the previous result instead of issuing another gateway refund.
+    if (refundRequestId) {
+      const existingByRequestId = existingAttempts.find(
+        a => a?.type === "refund" && a?.refundRequestId === refundRequestId
+      );
+      if (existingByRequestId) {
+        return ok({
+          orderId: snap.id,
+          status: "already_processed",
+          paymentId,
+          refundId:
+            existingByRequestId?.peachTransactionId ||
+            existingByRequestId?.transactionId ||
+            null
+        });
+      }
+    }
 
-    if (alreadyRefunded) {
-      return ok({
-        orderId: snap.id,
-        status: "already_refunded"
-      });
+    if (paymentStatus === "refunded") {
+      return err(409, "Already Refunded", "Order payment is already fully refunded.");
     }
 
     const paidAmount = Number(order?.payment?.paid_amount_incl || 0);
-    const existingRefunded = Number(order?.payment?.refunded_amount_incl || 0);
-    const refundAmountInput = amount ?? paidAmount;
+
+    if (paidAmount <= 0) {
+      return err(409, "Nothing To Refund", "No paid balance remains on this order.");
+    }
+
+    const existingRefundedField = Number(order?.payment?.refunded_amount_incl || 0);
+    const existingRefundedAttempts = existingAttempts
+      .filter(a => a?.type === "refund")
+      .reduce((sum, a) => sum + Number(a?.amount_incl || 0), 0);
+    const existingRefunded = Number(
+      Math.max(existingRefundedField, existingRefundedAttempts).toFixed(2)
+    );
+    const refundAmountInput = isBlank(amount) ? paidAmount : amount;
     const refundAmountNormalized = normalizeAmount(refundAmountInput);
     const refundCurrency = currency || order?.payment?.currency;
     const refundMessage = String(message || "").trim();
@@ -198,7 +228,25 @@ export async function POST(req) {
       return err(
         409,
         "Invalid Refund Amount",
-        "Refund amount cannot exceed paid amount."
+        "Refund amount cannot exceed remaining paid amount.",
+        {
+          remaining_paid_amount_incl: paidAmount
+        }
+      );
+    }
+
+    const matchingChargeAttempt = existingAttempts.find(
+      a =>
+        a?.type !== "refund" &&
+        a?.status === "charged" &&
+        a?.peachTransactionId === paymentId
+    );
+
+    if (!matchingChargeAttempt) {
+      return err(
+        404,
+        "Payment Attempt Not Found",
+        "No charged payment attempt was found for this paymentId on the order."
       );
     }
 
@@ -229,8 +277,41 @@ export async function POST(req) {
       currency: refundCurrency,
       status: "refunded",
       createdAt: now(),
+      ...(refundRequestId ? { refundRequestId } : {}),
       ...(refundMessage ? { message: refundMessage } : {})
     };
+
+    const nextAttempts = existingAttempts.map(a => {
+      if (
+        a?.type === "refund" ||
+        a?.status !== "charged" ||
+        a?.peachTransactionId !== paymentId
+      ) {
+        return a;
+      }
+
+      const chargedAmountIncl = Number(a?.amount_incl || 0);
+      const previousRefundedAmount = Number(a?.refunded_amount_incl || 0);
+      const nextRefundedAmount = Number(
+        Math.min(chargedAmountIncl, previousRefundedAmount + refundAmount).toFixed(2)
+      );
+      const nextRemainingRefundable = Number(
+        Math.max(chargedAmountIncl - nextRefundedAmount, 0).toFixed(2)
+      );
+      const nextRefundState =
+        nextRefundedAmount <= 0
+          ? "none"
+          : nextRemainingRefundable === 0
+            ? "refunded"
+            : "partial_refund";
+
+      return {
+        ...a,
+        refund_state: nextRefundState,
+        refunded_amount_incl: nextRefundedAmount,
+        remaining_refundable_amount_incl: nextRemainingRefundable
+      };
+    });
 
     const remainingPaid = Math.max(
       0,
@@ -248,7 +329,7 @@ export async function POST(req) {
       "payment.refunded_currency": refundCurrency,
       "payment.refunded_at": now(),
       "payment.refund_count": (order?.payment?.refund_count || 0) + 1,
-      "payment.attempts": [...existingAttempts, attempt],
+      "payment.attempts": [...nextAttempts, attempt],
       "order.status.payment": isFullyRefunded ? "refunded" : "partial_refund",
       "timestamps.updatedAt": now()
     };

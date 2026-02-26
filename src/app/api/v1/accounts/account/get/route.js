@@ -14,6 +14,7 @@ const ok = (p={},s=200)=>NextResponse.json({ ok:true, ...p },{ status:s });
 const err = (s,t,m,e={})=>NextResponse.json({ ok:false, title:t, message:m, ...e },{ status:s });
 
 const PAGE_SIZE = 50;
+const NEW_CUSTOMER_WINDOW_DAYS = 5;
 
 function isEmpty(value) {
   if (value === null || value === undefined) return true;
@@ -27,6 +28,54 @@ function parseDate(value) {
   if (!value) return null;
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function getOrderCustomerId(order) {
+  return (
+    order?.meta?.orderedFor ||
+    order?.order?.customerId ||
+    order?.customer_snapshot?.customerId ||
+    order?.customer_snapshot?.uid ||
+    null
+  );
+}
+
+function getUserCustomerId(user, fallback = null) {
+  return (
+    user?.uid ||
+    user?.customerId ||
+    user?.customer_id ||
+    fallback ||
+    null
+  );
+}
+
+async function buildOrderCountIndex() {
+  const snap = await getDocs(collection(db, "orders_v2"));
+  const index = new Map();
+
+  snap.forEach(docSnap => {
+    const customerId = getOrderCustomerId(docSnap.data());
+    if (!customerId) return;
+    index.set(customerId, (index.get(customerId) || 0) + 1);
+  });
+
+  return index;
+}
+
+function getCreatedAtDate(user) {
+  const direct =
+    parseDate(user?.createdAt) ||
+    parseDate(user?.timestamps?.createdAt) ||
+    parseDate(user?.created_time?.toDate?.());
+  if (direct) return direct;
+
+  const seconds = Number(user?.created_time?.seconds);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return new Date(seconds * 1000);
+  }
+
+  return parseDate(user?.created_time);
 }
 
 function normalizeMedia(user) {
@@ -46,6 +95,40 @@ function normalizeMedia(user) {
   return {
     ...user,
     media: normalizedMedia
+  };
+}
+
+function enrichAccountFlags(user, totalOrdersPlaced = 0) {
+  const createdAt = getCreatedAtDate(user);
+  const account = user?.account || {};
+  const credit = user?.credit || {};
+  const accountType = String(account?.accountType || "").toLowerCase();
+  const accountActive = account?.accountActive;
+  const onboardingComplete = account?.onboardingComplete;
+  const creditStatus = String(credit?.creditStatus || "").toLowerCase();
+
+  const nowMs = Date.now();
+  const createdMs = createdAt instanceof Date ? createdAt.getTime() : null;
+  const ageDays = Number.isFinite(createdMs)
+    ? (nowMs - createdMs) / (1000 * 60 * 60 * 24)
+    : null;
+
+  const isNewCustomer =
+    ageDays !== null &&
+    ageDays >= 0 &&
+    ageDays <= NEW_CUSTOMER_WINDOW_DAYS;
+
+  const hasSubmittedCreditApplication =
+    accountType === "business" &&
+    onboardingComplete === true &&
+    accountActive === false &&
+    (creditStatus === "" || creditStatus === "none" || creditStatus === "pending");
+
+  return {
+    ...user,
+    isNewCustomer,
+    hasSubmittedCreditApplication,
+    totalOrdersPlaced: Number(totalOrdersPlaced || 0)
   };
 }
 
@@ -137,13 +220,17 @@ export async function POST(req) {
       }
 
       const data = normalizeMedia(snap.data());
+      const orderCounts = await buildOrderCountIndex();
+      const customerId = getUserCustomerId(data, uid);
       const schemaVersion = data?.account?.schemaVersion || null;
       const isNewSchema =
         (typeof schemaVersion === "number" && schemaVersion >= 2) ||
         Boolean(data?.account?.accountType);
 
       return ok({
-        data: isNewSchema ? data : null,
+        data: isNewSchema
+          ? enrichAccountFlags(data, orderCounts.get(customerId) || 0)
+          : null,
         meta: {
           schemaVersion,
           isNewSchema
@@ -168,13 +255,17 @@ export async function POST(req) {
       }
 
       const normalizedMatch = normalizeMedia(match);
+      const orderCounts = await buildOrderCountIndex();
+      const customerId = getUserCustomerId(normalizedMatch);
       const schemaVersion = normalizedMatch?.account?.schemaVersion || null;
       const isNewSchema =
         (typeof schemaVersion === "number" && schemaVersion >= 2) ||
         Boolean(normalizedMatch?.account?.accountType);
 
       return ok({
-        data: isNewSchema ? normalizedMatch : null,
+        data: isNewSchema
+          ? enrichAccountFlags(normalizedMatch, orderCounts.get(customerId) || 0)
+          : null,
         meta: {
           schemaVersion,
           isNewSchema
@@ -183,6 +274,7 @@ export async function POST(req) {
     }
 
     const filtered = users.filter(u => matchesFilters(u, filters));
+    const orderCounts = await buildOrderCountIndex();
 
     filtered.sort((a, b) => {
       const aTime = parseDate(a?.created_time)?.getTime() || 0;
@@ -198,7 +290,10 @@ export async function POST(req) {
     const end = paginate ? start + PAGE_SIZE : total;
     const pageUsers = start < total ? filtered.slice(start, end) : [];
     const pageUsersWithIndex = pageUsers.map((user, i) => ({
-      ...normalizeMedia(user),
+      ...enrichAccountFlags(
+        normalizeMedia(user),
+        orderCounts.get(getUserCustomerId(user)) || 0
+      ),
       account_index: start + i + 1
     }));
 

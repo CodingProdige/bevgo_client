@@ -75,7 +75,7 @@ function buildRefundSummary(order) {
     a?.type === "refund" ||
     a?.status === "refunded" ||
     a?.refund === true ||
-    a?.refund_status
+    (a?.refund_status && a?.refund_status !== "none")
   ).map(a => ({
     amount_incl: Number(a?.amount_incl || 0),
     status: a?.status || null,

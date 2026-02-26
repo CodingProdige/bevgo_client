@@ -14,11 +14,15 @@ import { db } from "@/lib/firebaseConfig";
 
 /* ───────── HELPERS ───────── */
 
+const safeStatus = value => {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 200 && n <= 599 ? n : 500;
+};
 const ok = (data = {}, status = 200) =>
-  NextResponse.json({ ok: true, data }, { status });
+  NextResponse.json({ ok: true, data }, { status: safeStatus(status) });
 
 const err = (status = 500, title = "Server Error", message = "Unknown error") =>
-  NextResponse.json({ ok: false, title, message }, { status });
+  NextResponse.json({ ok: false, title, message }, { status: safeStatus(status) });
 
 const now = () => new Date().toISOString();
 const r2 = v => Number((Number(v) || 0).toFixed(2));
@@ -171,13 +175,23 @@ export async function POST(req) {
       const allocationResults = [];
       let allocatedTotal = 0;
       const transactionTime = now();
+      const paymentRefs = uniquePaymentIds.map(paymentId => ({
+        paymentId,
+        ref: doc(db, "payments_v2", paymentId)
+      }));
+      const paymentSnaps = await Promise.all(
+        paymentRefs.map(entry => tx.get(entry.ref))
+      );
+      const paymentSnapById = new Map(
+        paymentRefs.map((entry, idx) => [entry.paymentId, paymentSnaps[idx]])
+      );
 
       for (const paymentId of uniquePaymentIds) {
         if (remainingDue <= 0) break;
-        const payRef = doc(db, "payments_v2", paymentId);
-        const paySnap = await tx.get(payRef);
+        const payRef = paymentRefs.find(p => p.paymentId === paymentId)?.ref;
+        const paySnap = paymentSnapById.get(paymentId);
 
-        if (!paySnap.exists()) {
+        if (!payRef || !paySnap || !paySnap.exists()) {
           allocationResults.push({
             paymentId,
             allocated_incl: 0,
@@ -280,10 +294,31 @@ export async function POST(req) {
       };
     });
 
+    if (!result) {
+      return err(
+        500,
+        "Allocation Failed",
+        "Transaction completed without a result payload."
+      );
+    }
+
+    if (result.status !== "already_paid" && Number(result.allocated_total_incl || 0) <= 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          title: "No Allocation Performed",
+          message:
+            "No funds were allocated. Check per-payment statuses for customer/currency/no_funds issues.",
+          data: result
+        },
+        { status: 409 }
+      );
+    }
+
     return ok(result);
   } catch (e) {
     return err(
-      e?.code ?? 500,
+      safeStatus(e?.code),
       e?.title ?? "Allocation Failed",
       e?.message ?? "Unexpected error allocating payments."
     );

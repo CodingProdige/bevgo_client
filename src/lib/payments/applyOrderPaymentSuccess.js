@@ -158,13 +158,14 @@ export async function applyOrderPaymentSuccess({
 
     amount_incl: incoming,
     currency,
+    refund_state: "none",
+    refunded_amount_incl: 0,
+    remaining_refundable_amount_incl: Number(incoming.toFixed(2)),
     status: "charged",
     createdAt: now()
   };
 
   /* ───────────────── UPDATE ORDER ───────────────── */
-
-  const isPersonal = order?.order?.type === "personal";
 
   const updatePayload = {
     "payment.method": method,
@@ -178,7 +179,7 @@ export async function applyOrderPaymentSuccess({
     "timestamps.updatedAt": now()
   };
 
-  if (isPersonal && isPaid) {
+  if (isPaid) {
     updatePayload["order.editable"] = false;
     updatePayload["order.editable_reason"] =
       "Order is locked because payment was completed.";

@@ -143,19 +143,18 @@ export async function POST(req) {
             }
           : null,
 
+      amount_incl: paidAmount,
+      currency: payment.currency,
+      refund_state: "none",
+      refunded_amount_incl: 0,
+      remaining_refundable_amount_incl: Number(paidAmount.toFixed(2)),
       status: "charged",
       createdAt: now()
     };
 
     const nextAttempts = [...existingAttempts, attempt];
 
-    /* ───── Determine editability changes ─────
-       LOCKED RULE:
-       - personal orders: editable always false + lock immediately
-       - business orders: do NOT change editable here (invoice creation locks them)
-    ───────────────────────────────────────── */
-
-    const isPersonal = order?.order?.type === "personal";
+    /* ───── Determine editability changes ───── */
 
     const updatePayload = {
       "payment.method": payment.method || "card",
@@ -172,12 +171,10 @@ export async function POST(req) {
       }
     };
 
-    if (isPersonal) {
-      updatePayload["order.editable"] = false;
-      updatePayload["order.editable_reason"] =
-        "Order is locked because payment was completed.";
-      updatePayload.timestamps.lockedAt = now();
-    }
+    updatePayload["order.editable"] = false;
+    updatePayload["order.editable_reason"] =
+      "Order is locked because payment was completed.";
+    updatePayload.timestamps.lockedAt = now();
 
     const paymentDoc = {
       payment: {
@@ -223,7 +220,7 @@ export async function POST(req) {
       orderType: order?.order?.type || null,
       paymentStatus: "paid",
       orderStatus: "confirmed",
-      editable: isPersonal ? false : order?.order?.editable ?? null
+      editable: false
     });
 
   } catch (e) {

@@ -115,11 +115,7 @@ export async function POST(req) {
     /* -----------------------------------------
        ACTIVE ACCOUNT LOGIC
     ----------------------------------------- */
-    let accountActive = true;
-    if (accountType === "business") {
-      const payMethod = data.preferredPaymentMethod || "cod";
-      accountActive = payMethod === "cod";
-    }
+    const accountActive = true;
 
     /* -----------------------------------------
        CUSTOMER CODE NAME SOURCE
