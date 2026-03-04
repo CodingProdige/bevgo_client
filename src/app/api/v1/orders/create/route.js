@@ -82,7 +82,7 @@ function getPeriodKey(iso, billingPeriod) {
   return date.toISOString().slice(0, 7);
 }
 
-function normalizeDeliveryFee(input, accountType, currency) {
+function normalizeDeliveryFee(input, currency) {
   if (!input || typeof input !== "object") {
     return {
       amountIncl: 0,
@@ -102,9 +102,7 @@ function normalizeDeliveryFee(input, accountType, currency) {
     input?.amount ??
     0;
   const normalizedAmount = Number(Number(rawAmount || 0).toFixed(2));
-  const amountIncl = accountType === "business"
-    ? 0
-    : normalizedAmount;
+  const amountIncl = normalizedAmount;
   const amountExcl = amountIncl;
   const vat = 0;
 
@@ -116,9 +114,7 @@ function normalizeDeliveryFee(input, accountType, currency) {
     band: input?.fee?.band || input?.band || null,
     distanceKm: input?.distance?.km ?? input?.distanceKm ?? null,
     durationMinutes: input?.duration?.minutes ?? input?.durationMinutes ?? null,
-    reason: accountType === "business"
-      ? "business_accounts_free_delivery"
-      : input?.fee?.reason || input?.reason || "distance_band",
+    reason: input?.fee?.reason || input?.reason || "distance_band",
     raw: input
   };
 }
@@ -130,7 +126,7 @@ export async function POST(req) {
     const {
       cartId,
       customerId,
-      type = "personal",
+      type = null,
       source = "web",
       customerNote = null,
       deliverySpeed = "standard",
@@ -139,6 +135,9 @@ export async function POST(req) {
       deliveryAddress = null,
       onBehalfOfCustomerId = null
     } = await req.json();
+
+    const safeOnBehalfOf = String(onBehalfOfCustomerId || "").trim();
+    const targetCustomerId = safeOnBehalfOf ? safeOnBehalfOf : customerId;
 
     if (!cartId || !customerId) {
       return err(400, "Missing Parameters", "cartId and customerId are required.");
@@ -151,7 +150,10 @@ export async function POST(req) {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customerId: cartId })
+        body: JSON.stringify({
+          customerId: cartId,
+          ...(safeOnBehalfOf ? { onBehalfOfUid: targetCustomerId } : {})
+        })
       }
     );
 
@@ -180,8 +182,6 @@ export async function POST(req) {
 
     /* ───── Load Customer ───── */
 
-    const safeOnBehalfOf = String(onBehalfOfCustomerId || "").trim();
-    const targetCustomerId = safeOnBehalfOf ? safeOnBehalfOf : customerId;
     const userRef = doc(db, "users", targetCustomerId);
     const userSnap = await getDoc(userRef);
 
@@ -190,7 +190,12 @@ export async function POST(req) {
     }
 
     const user = userSnap.data();
-    const accountType = user?.account?.accountType || null;
+    const normalizedOrderType =
+      (typeof type === "string" && type.trim() !== ""
+        ? type.trim()
+        : null) ||
+      user?.account?.accountType ||
+      "customer";
     const defaultLocation = (user?.deliveryLocations || []).find(
       loc => loc && loc.is_default === true
     );
@@ -255,7 +260,6 @@ export async function POST(req) {
 
     const deliveryFeeData = normalizeDeliveryFee(
       deliveryFee,
-      accountType,
       "ZAR"
     );
 
@@ -278,7 +282,7 @@ export async function POST(req) {
         orderNumber,
         merchantTransactionId,
         customerId: targetCustomerId,
-        type,
+        type: normalizedOrderType,
         channel: cart.cart?.channel || source,
         editable: true,
         editable_reason: "Order is editable.",

@@ -92,11 +92,10 @@ export async function POST(req) {
     const durationMinutes = Number((durationSeconds / 60).toFixed(1));
 
     const { fee, band } = getFeeBand(distanceKm);
-    const isBusiness = accountType === "business";
 
     return ok({
       accountType,
-      isBusiness,
+      isBusiness: false,
       origin: ORIGIN_ADDRESS,
       destination,
       distance: {
@@ -110,10 +109,10 @@ export async function POST(req) {
         text: element.duration?.text || null
       },
       fee: {
-        amount: isBusiness ? 0 : fee,
+        amount: fee,
         currency: "ZAR",
         band,
-        reason: isBusiness ? "business_accounts_free_delivery" : "distance_band"
+        reason: "distance_band"
       },
       raw: {
         apiStatus: json?.status || null,

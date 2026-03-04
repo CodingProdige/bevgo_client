@@ -122,33 +122,31 @@ function getCustomerSnapshot(order) {
   const customer = order?.customer_snapshot || {};
   const account = customer?.account || {};
   const accountType = account.accountType || account.type || "";
-  const isBusiness = accountType === "business";
-  const customerTypeLabel = isBusiness ? "Business" : "Personal";
-
-  const business = customer?.business || {};
-  const personal = customer?.personal || {};
   const defaultLocation = (customer?.deliveryLocations || []).find(
     loc => loc && loc.is_default === true
   );
 
-  const resolvedName = isBusiness
-    ? business?.companyName || personal?.fullName || "Customer"
-    : personal?.fullName || business?.companyName || "Customer";
-  const resolvedPhone = isBusiness
-    ? business?.phoneNumber || personal?.phoneNumber || ""
-    : personal?.phoneNumber || business?.phoneNumber || "";
+  const resolvedName =
+    account?.accountName ||
+    customer?.business?.companyName ||
+    customer?.personal?.fullName ||
+    "Customer";
+  const resolvedPhone =
+    account?.phoneNumber ||
+    customer?.business?.phoneNumber ||
+    customer?.personal?.phoneNumber ||
+    "";
 
   return {
     name: resolvedName,
     email: customer?.email || "",
     phone: resolvedPhone,
     customerCode: account.customerCode || customer.customerCode || "",
-    vat: business?.vatNumber || account.vatNumber || "",
+    vat: account.vatNumber || customer?.business?.vatNumber || "",
     payment_terms: customer?.credit?.paymentTerms || account.payment_terms || "",
-    fallbackAddress: defaultLocation || personal.address || "",
-    customerTypeLabel,
-    business,
-    personal
+    fallbackAddress: defaultLocation || "",
+    customerTypeLabel: accountType || "Customer",
+    account
   };
 }
 

@@ -19,6 +19,13 @@ function isEmpty(value) {
   return false;
 }
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (!isEmpty(value)) return value;
+  }
+  return "";
+}
+
 /* -----------------------------------------
    Customer Code Generator (Multi-word)
 ----------------------------------------- */
@@ -73,9 +80,12 @@ export async function POST(req) {
     if (!uid || !data)
       return err(400, "Missing Fields", "uid and data are required for onboarding.");
 
-    const accountType = data.accountType;
+    const accountType = firstNonEmpty(
+      data?.account?.accountType,
+      data?.accountType
+    );
     if (!accountType)
-      return err(400, "Missing Account Type", "data.accountType is required.");
+      return err(400, "Missing Account Type", "data.account.accountType is required.");
 
     const ref = doc(db, "users", uid);
     const snap = await getDoc(ref);
@@ -100,19 +110,6 @@ export async function POST(req) {
     }
 
     /* -----------------------------------------
-       ID VALIDATION — PERSONAL ONLY
-    ----------------------------------------- */
-    if (accountType === "personal") {
-      if (isEmpty(data.idData) || !data.idData.isValid) {
-        return err(
-          400,
-          "Invalid ID",
-          "A valid South African ID or passport is required."
-        );
-      }
-    }
-
-    /* -----------------------------------------
        ACTIVE ACCOUNT LOGIC
     ----------------------------------------- */
     const accountActive = true;
@@ -120,10 +117,13 @@ export async function POST(req) {
     /* -----------------------------------------
        CUSTOMER CODE NAME SOURCE
     ----------------------------------------- */
-    const nameForCode =
-      accountType === "personal"
-        ? data.personal?.fullName
-        : data.business?.companyName;
+    const nameForCode = firstNonEmpty(
+      data?.account?.accountName,
+      data?.accountName,
+      data?.business?.companyName,
+      data?.personal?.fullName,
+      existing?.account?.accountName
+    );
 
     if (isEmpty(nameForCode)) {
       return err(400, "Missing Name", "Name is required to generate customer code.");
@@ -134,74 +134,50 @@ export async function POST(req) {
         ? existing.account.customerCode
         : await generateCustomerCode(nameForCode);
 
-    /* -----------------------------------------
-       DEFAULT ID STRUCTURE
-    ----------------------------------------- */
-    const defaultIdData = {
-      type: "",
-      isValid: false,
-      suspectedFraud: false,
-      country: "",
-      countryName: "",
-      flag: "",
-      dateOfBirth: "",
-      age: null,
-      isAdult: false,
-      gender: "",
-      confidence: 0
+    const accountDetails = {
+      accountName: firstNonEmpty(
+        data?.account?.accountName,
+        data?.accountName,
+        data?.business?.companyName,
+        data?.personal?.fullName,
+        existing?.account?.accountName
+      ),
+      phoneNumber: firstNonEmpty(
+        data?.account?.phoneNumber,
+        data?.phoneNumber,
+        data?.business?.phoneNumber,
+        data?.personal?.phoneNumber,
+        existing?.account?.phoneNumber
+      ),
+      vatNumber: firstNonEmpty(
+        data?.account?.vatNumber,
+        data?.business?.vatNumber,
+        existing?.account?.vatNumber
+      ),
+      registrationNumber: firstNonEmpty(
+        data?.account?.registrationNumber,
+        data?.business?.registrationNumber,
+        existing?.account?.registrationNumber
+      ),
+      liquorLicenseNumber: firstNonEmpty(
+        data?.account?.liquorLicenseNumber,
+        data?.business?.liquorLicenseNumber,
+        existing?.account?.liquorLicenseNumber
+      ),
+      businessType: firstNonEmpty(
+        data?.account?.businessType,
+        data?.business?.businessType,
+        existing?.account?.businessType
+      )
     };
 
-    /* -----------------------------------------
-       PERSONAL BLOCK (SAFE)
-    ----------------------------------------- */
-    const personalBlock =
-      accountType === "personal"
-        ? {
-            fullName: !isEmpty(data.personal?.fullName)
-              ? data.personal.fullName
-              : existing.personal?.fullName || "",
-
-            phoneNumber: !isEmpty(data.personal?.phoneNumber)
-              ? data.personal.phoneNumber
-              : existing.personal?.phoneNumber || "",
-
-            idData: !isEmpty(data.idData)
-              ? { ...defaultIdData, ...data.idData }
-              : existing.personal?.idData || defaultIdData
-          }
-        : null;
-
-    /* -----------------------------------------
-       BUSINESS BLOCK (SAFE)
-    ----------------------------------------- */
-    const businessBlock =
-      accountType === "business"
-        ? {
-            companyName: !isEmpty(data.business?.companyName)
-              ? data.business.companyName
-              : existing.business?.companyName || "",
-
-            phoneNumber: !isEmpty(data.business?.phoneNumber)
-              ? data.business.phoneNumber
-              : existing.business?.phoneNumber || "",
-
-            vatNumber: !isEmpty(data.business?.vatNumber)
-              ? data.business.vatNumber
-              : existing.business?.vatNumber || "",
-
-            registrationNumber: !isEmpty(data.business?.registrationNumber)
-              ? data.business.registrationNumber
-              : existing.business?.registrationNumber || "",
-
-            liquorLicenseNumber: !isEmpty(data.business?.liquorLicenseNumber)
-              ? data.business.liquorLicenseNumber
-              : existing.business?.liquorLicenseNumber || "",
-
-            businessType: !isEmpty(data.business?.businessType)
-              ? data.business.businessType
-              : existing.business?.businessType || ""
-          }
-        : null;
+    if (isEmpty(accountDetails.accountName) || isEmpty(accountDetails.phoneNumber)) {
+      return err(
+        400,
+        "Missing Account Details",
+        "account.accountName and account.phoneNumber are required."
+      );
+    }
 
     /* -----------------------------------------
        FINAL USER PAYLOAD
@@ -212,6 +188,7 @@ export async function POST(req) {
       created_time: existing.created_time || now, // ISO
 
       account: {
+        ...(existing.account || {}),
         accountActive,
         onboardingComplete: true,
         accountType,
@@ -221,11 +198,10 @@ export async function POST(req) {
           data.account?.profileColor ??
           data.profileColor ??
           existing.account?.profileColor ??
-          ""
+          "",
+        ...accountDetails
       },
-
-      personal: personalBlock,
-      business: businessBlock,
+      paymentMethods: existing.paymentMethods || { cards: [] },
 
       media: {
         photoUrl: !isEmpty(data.media?.photoUrl)

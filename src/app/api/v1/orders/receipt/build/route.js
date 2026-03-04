@@ -133,18 +133,17 @@ function buildReceiptText(order, width) {
   const orderNumber = order?.order?.orderNumber || order?.order?.orderId || "";
   const createdAt = order?.timestamps?.createdAt || new Date().toISOString();
   const customerSnapshot = order?.customer_snapshot || {};
-  const accountType =
-    customerSnapshot?.account?.accountType ||
-    customerSnapshot?.account?.type ||
+  const account = customerSnapshot?.account || {};
+  const customerName =
+    account?.accountName ||
+    customerSnapshot?.business?.companyName ||
+    customerSnapshot?.personal?.fullName ||
     "";
-  const isBusiness = accountType === "business";
-  const customerName = isBusiness
-    ? customerSnapshot?.business?.companyName ||
-      customerSnapshot?.personal?.fullName ||
-      ""
-    : customerSnapshot?.personal?.fullName ||
-      customerSnapshot?.business?.companyName ||
-      "";
+  const accountPhone =
+    account?.phoneNumber ||
+    customerSnapshot?.business?.phoneNumber ||
+    customerSnapshot?.personal?.phoneNumber ||
+    "";
 
   wrapLine(
     "Formal invoice is available in the app order view.",
@@ -162,23 +161,17 @@ function buildReceiptText(order, width) {
   lines.push(padLine("Order", orderNumber, width));
   lines.push(padLine("Order Date (UTC)", formatOrderDate(createdAt), width));
   if (customerName) lines.push(padLine("Customer", customerName, width));
-  if (isBusiness) {
-    const business = customerSnapshot?.business || {};
-    if (business.companyName && business.companyName !== customerName) {
-      lines.push(padLine("Business", business.companyName, width));
-    }
-    if (business.phoneNumber) lines.push(padLine("Phone", business.phoneNumber, width));
-    if (business.liquorLicenseNumber) {
-      lines.push(padLine("Liquor License", business.liquorLicenseNumber, width));
-    }
-    if (business.registrationNumber) {
-      lines.push(padLine("Registration", business.registrationNumber, width));
-    }
-    if (business.businessType) {
-      lines.push(padLine("Business Type", business.businessType, width));
-    }
-    if (business.vatNumber) lines.push(padLine("VAT No", business.vatNumber, width));
+  if (accountPhone) lines.push(padLine("Phone", accountPhone, width));
+  if (account?.liquorLicenseNumber) {
+    lines.push(padLine("Liquor License", account.liquorLicenseNumber, width));
   }
+  if (account?.registrationNumber) {
+    lines.push(padLine("Registration", account.registrationNumber, width));
+  }
+  if (account?.businessType) {
+    lines.push(padLine("Business Type", account.businessType, width));
+  }
+  if (account?.vatNumber) lines.push(padLine("VAT No", account.vatNumber, width));
   lines.push("-".repeat(width));
 
   const itemColumns = getItemColumns(width);

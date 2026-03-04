@@ -19,6 +19,13 @@ function isEmpty(value) {
   return false;
 }
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (!isEmpty(value)) return value;
+  }
+  return undefined;
+}
+
 /* -----------------------------------------
    UPDATE ENDPOINT
 ----------------------------------------- */
@@ -44,27 +51,54 @@ export async function POST(req) {
     ----------------------------------------- */
     const payload = {};
 
-    const shouldUpdateAccount = !isEmpty(data.account);
+    const shouldUpdateAccount =
+      !isEmpty(data.account) ||
+      !isEmpty(data.personal) ||
+      !isEmpty(data.business);
     if (shouldUpdateAccount) {
       payload.account = {
         ...(existing.account || {}),
         ...(isEmpty(data.account) ? {} : data.account)
       };
-    }
-
-    if (!isEmpty(data.personal)) {
-      const personalPayload = {
-        ...(existing.personal || {}),
-        ...data.personal
+      const mappedAccount = {
+        accountName: firstNonEmpty(
+          data?.account?.accountName,
+          data?.business?.companyName,
+          data?.personal?.fullName,
+          payload.account.accountName
+        ),
+        phoneNumber: firstNonEmpty(
+          data?.account?.phoneNumber,
+          data?.business?.phoneNumber,
+          data?.personal?.phoneNumber,
+          payload.account.phoneNumber
+        ),
+        vatNumber: firstNonEmpty(
+          data?.account?.vatNumber,
+          data?.business?.vatNumber,
+          payload.account.vatNumber
+        ),
+        registrationNumber: firstNonEmpty(
+          data?.account?.registrationNumber,
+          data?.business?.registrationNumber,
+          payload.account.registrationNumber
+        ),
+        liquorLicenseNumber: firstNonEmpty(
+          data?.account?.liquorLicenseNumber,
+          data?.business?.liquorLicenseNumber,
+          payload.account.liquorLicenseNumber
+        ),
+        businessType: firstNonEmpty(
+          data?.account?.businessType,
+          data?.business?.businessType,
+          payload.account.businessType
+        )
       };
-      delete personalPayload.idData;
-      payload.personal = personalPayload;
-    }
-
-    if (!isEmpty(data.business)) {
-      payload.business = {
-        ...(existing.business || {}),
-        ...data.business
+      payload.account = {
+        ...payload.account,
+        ...Object.fromEntries(
+          Object.entries(mappedAccount).filter(([, value]) => value !== undefined)
+        )
       };
     }
 

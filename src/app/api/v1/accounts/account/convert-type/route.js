@@ -17,59 +17,12 @@ function isEmpty(value) {
   return false;
 }
 
-function toTargetType(value) {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "personal" || normalized === "business") return normalized;
-  return null;
-}
-
-function normalizePersonal(existing, incoming) {
-  return {
-    fullName:
-      !isEmpty(incoming?.fullName) ? incoming.fullName : existing?.fullName || "",
-    phoneNumber:
-      !isEmpty(incoming?.phoneNumber)
-        ? incoming.phoneNumber
-        : existing?.phoneNumber || "",
-    idData: !isEmpty(incoming?.idData)
-      ? incoming.idData
-      : existing?.idData || null
-  };
-}
-
-function normalizeBusiness(existing, incoming) {
-  return {
-    companyName:
-      !isEmpty(incoming?.companyName)
-        ? incoming.companyName
-        : existing?.companyName || "",
-    phoneNumber:
-      !isEmpty(incoming?.phoneNumber)
-        ? incoming.phoneNumber
-        : existing?.phoneNumber || "",
-    vatNumber:
-      !isEmpty(incoming?.vatNumber) ? incoming.vatNumber : existing?.vatNumber || "",
-    registrationNumber:
-      !isEmpty(incoming?.registrationNumber)
-        ? incoming.registrationNumber
-        : existing?.registrationNumber || "",
-    liquorLicenseNumber:
-      !isEmpty(incoming?.liquorLicenseNumber)
-        ? incoming.liquorLicenseNumber
-        : existing?.liquorLicenseNumber || "",
-    businessType:
-      !isEmpty(incoming?.businessType)
-        ? incoming.businessType
-        : existing?.businessType || ""
-  };
-}
-
 export async function POST(req) {
   try {
     const body = await req.json().catch(() => ({}));
     const {
       uid,
-      targetAccountType: rawTargetAccountType,
+      targetAccountType,
       data = {}
     } = body || {};
 
@@ -77,13 +30,8 @@ export async function POST(req) {
       return err(400, "Missing Fields", "uid is required.");
     }
 
-    const targetAccountType = toTargetType(rawTargetAccountType);
-    if (!targetAccountType) {
-      return err(
-        400,
-        "Invalid Account Type",
-        "targetAccountType must be 'personal' or 'business'."
-      );
+    if (isEmpty(targetAccountType)) {
+      return err(400, "Missing Account Type", "targetAccountType is required.");
     }
 
     const ref = doc(db, "users", String(uid).trim());
@@ -93,53 +41,18 @@ export async function POST(req) {
     }
 
     const existing = snap.data() || {};
-    const currentAccountType = String(existing?.account?.accountType || "")
-      .trim()
-      .toLowerCase();
-
-    if (currentAccountType === targetAccountType) {
-      return ok({
-        data: {
-          uid: String(uid).trim(),
-          accountType: targetAccountType,
-          unchanged: true
-        }
-      });
-    }
-
+    const previousAccountType = existing?.account?.accountType || null;
+    const nextAccountType = String(targetAccountType).trim();
     const now = new Date().toISOString();
-    const nextPersonal = normalizePersonal(existing?.personal, data?.personal);
-    const nextBusiness = normalizeBusiness(existing?.business, data?.business);
-
-    if (targetAccountType === "business") {
-      if (isEmpty(nextBusiness.companyName) || isEmpty(nextBusiness.phoneNumber)) {
-        return err(
-          400,
-          "Missing Business Fields",
-          "business.companyName and business.phoneNumber are required to convert to business."
-        );
-      }
-    }
-
-    if (targetAccountType === "personal") {
-      if (isEmpty(nextPersonal.fullName) || isEmpty(nextPersonal.phoneNumber)) {
-        return err(
-          400,
-          "Missing Personal Fields",
-          "personal.fullName and personal.phoneNumber are required to convert to personal."
-        );
-      }
-    }
 
     const payload = {
       account: {
         ...(existing?.account || {}),
-        accountType: targetAccountType,
+        ...(isEmpty(data?.account) ? {} : data.account),
+        accountType: nextAccountType,
         accountActive: true,
         onboardingComplete: true
       },
-      personal: targetAccountType === "personal" ? nextPersonal : null,
-      business: targetAccountType === "business" ? nextBusiness : null,
       system: {
         ...(existing?.system || {}),
         updatedAt: now
@@ -151,8 +64,8 @@ export async function POST(req) {
     return ok({
       data: {
         uid: String(uid).trim(),
-        previousAccountType: currentAccountType || null,
-        accountType: targetAccountType,
+        previousAccountType,
+        accountType: nextAccountType,
         accountActive: true,
         convertedAt: now
       }

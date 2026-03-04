@@ -102,9 +102,8 @@ function enrichAccountFlags(user, totalOrdersPlaced = 0) {
   const createdAt = getCreatedAtDate(user);
   const account = user?.account || {};
   const credit = user?.credit || {};
-  const accountType = String(account?.accountType || "").toLowerCase();
   const accountActive = account?.accountActive;
-  const onboardingComplete = account?.onboardingComplete;
+  const onboardingComplete = account?.onboardingComplete === true;
   const creditStatus = String(credit?.creditStatus || "").toLowerCase();
 
   const nowMs = Date.now();
@@ -119,13 +118,13 @@ function enrichAccountFlags(user, totalOrdersPlaced = 0) {
     ageDays <= NEW_CUSTOMER_WINDOW_DAYS;
 
   const hasSubmittedCreditApplication =
-    accountType === "business" &&
     onboardingComplete === true &&
     accountActive === false &&
     (creditStatus === "" || creditStatus === "none" || creditStatus === "pending");
 
   return {
     ...user,
+    onboardingComplete,
     isNewCustomer,
     hasSubmittedCreditApplication,
     totalOrdersPlaced: Number(totalOrdersPlaced || 0)
@@ -228,9 +227,7 @@ export async function POST(req) {
         Boolean(data?.account?.accountType);
 
       return ok({
-        data: isNewSchema
-          ? enrichAccountFlags(data, orderCounts.get(customerId) || 0)
-          : null,
+        data: enrichAccountFlags(data, orderCounts.get(customerId) || 0),
         meta: {
           schemaVersion,
           isNewSchema
@@ -263,9 +260,7 @@ export async function POST(req) {
         Boolean(normalizedMatch?.account?.accountType);
 
       return ok({
-        data: isNewSchema
-          ? enrichAccountFlags(normalizedMatch, orderCounts.get(customerId) || 0)
-          : null,
+        data: enrichAccountFlags(normalizedMatch, orderCounts.get(customerId) || 0),
         meta: {
           schemaVersion,
           isNewSchema

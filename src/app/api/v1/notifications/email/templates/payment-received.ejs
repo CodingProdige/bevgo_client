@@ -2,15 +2,16 @@
   const snapshot = (typeof order !== "undefined" && order && order.customer_snapshot)
     ? order.customer_snapshot
     : {};
-  const accountType = snapshot?.account?.accountType || snapshot?.account?.type || "";
-  const isBusiness = accountType === "business";
+  const account = snapshot?.account || {};
   const derivedCompanyName =
+    account?.accountName ||
+    account?.companyName ||
     snapshot?.business?.companyName ||
-    snapshot?.account?.companyName ||
     "";
-  const derivedCustomerName = isBusiness
-    ? (derivedCompanyName || snapshot?.personal?.fullName || "")
-    : (snapshot?.personal?.fullName || derivedCompanyName || "");
+  const derivedCustomerName =
+    derivedCompanyName ||
+    snapshot?.personal?.fullName ||
+    "";
   const effectiveCustomerName =
     (typeof customerName !== "undefined" && customerName)
       ? customerName
