@@ -24,6 +24,15 @@ const err = (status, title, message, extra = {}) =>
   );
 
 const now = () => new Date().toISOString();
+const VAT_RATE = 0.15;
+const r2 = v => Number((Number(v) || 0).toFixed(2));
+
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
+  }
+  return "";
+}
 
 function isRentalItem(item) {
   const variant =
@@ -119,6 +128,56 @@ function normalizeDeliveryFee(input, currency) {
   };
 }
 
+function applyDeliveryToTotals(rawTotals, deliveryFeeData) {
+  const totals = { ...(rawTotals || {}) };
+
+  const deliveryFeeExcl = r2(deliveryFeeData?.amountExcl || 0);
+  const deliveryFeeIncl = r2(deliveryFeeData?.amountIncl || 0);
+  const deliveryFeeVat = r2(
+    deliveryFeeData?.vat ??
+      Math.max(deliveryFeeIncl - deliveryFeeExcl, 0)
+  );
+
+  const subtotalExcl = r2(totals?.subtotal_excl || 0);
+  const depositExcl = r2(totals?.deposit_total_excl || 0);
+  const pricingAdjustmentExcl = r2(
+    totals?.pricing_adjustment?.amount_excl ??
+    totals?.pricing_savings_excl ??
+    0
+  );
+  const discountedSubtotalExcl = r2(Math.max(subtotalExcl - pricingAdjustmentExcl, 0));
+
+  const baseFinalExcl = r2(subtotalExcl + depositExcl + deliveryFeeExcl);
+  const finalExclAfterDiscount = r2(discountedSubtotalExcl + depositExcl + deliveryFeeExcl);
+  const vatTotal = r2((discountedSubtotalExcl + depositExcl) * VAT_RATE + deliveryFeeVat);
+  const baseFinalIncl = r2(baseFinalExcl + r2((subtotalExcl + depositExcl) * VAT_RATE + deliveryFeeVat));
+  const finalInclAfterDiscount = r2(finalExclAfterDiscount + vatTotal);
+
+  const creditApplied = r2(totals?.credit?.applied || 0);
+  const finalPayableIncl = r2(Math.max(finalInclAfterDiscount - creditApplied, 0));
+
+  return {
+    ...totals,
+    delivery_fee_excl: deliveryFeeExcl,
+    delivery_fee_incl: deliveryFeeIncl,
+    delivery_fee_vat: deliveryFeeVat,
+    pricing_savings_excl: pricingAdjustmentExcl,
+    base_final_excl: baseFinalExcl,
+    base_final_incl: baseFinalIncl,
+    final_excl_after_discount: finalExclAfterDiscount,
+    final_incl_after_discount: finalInclAfterDiscount,
+    final_excl: finalExclAfterDiscount,
+    final_incl: finalInclAfterDiscount,
+    vat_total: vatTotal,
+    final_payable_incl: finalPayableIncl,
+    credit: {
+      ...(totals?.credit || {}),
+      applied: creditApplied,
+      final_payable_incl: finalPayableIncl
+    }
+  };
+}
+
 /* ───────────────── ENDPOINT ───────────────── */
 
 export async function POST(req) {
@@ -190,6 +249,25 @@ export async function POST(req) {
     }
 
     const user = userSnap.data();
+    if (user?.account?.onboardingComplete !== true) {
+      return err(
+        403,
+        "Onboarding Incomplete",
+        "Customer onboarding must be completed before placing an order."
+      );
+    }
+    const resolvedAccountName = firstNonEmptyString(
+      user?.account?.accountName,
+      user?.business?.companyName,
+      user?.personal?.fullName
+    );
+    if (!resolvedAccountName) {
+      return err(
+        400,
+        "Missing Account Name",
+        "Customer must have account.accountName, business.companyName, or personal.fullName."
+      );
+    }
     const normalizedOrderType =
       (typeof type === "string" && type.trim() !== ""
         ? type.trim()
@@ -263,16 +341,7 @@ export async function POST(req) {
       "ZAR"
     );
 
-    const totals = { ...(cart.totals || {}) };
-    totals.delivery_fee_excl = deliveryFeeData.amountExcl;
-    totals.delivery_fee_incl = deliveryFeeData.amountIncl;
-    totals.delivery_fee_vat = deliveryFeeData.vat;
-    totals.final_excl = Number(
-      (Number(totals.final_excl || 0) + deliveryFeeData.amountExcl).toFixed(2)
-    );
-    totals.final_incl = Number(
-      (Number(totals.final_incl || 0) + deliveryFeeData.amountIncl).toFixed(2)
-    );
+    const totals = applyDeliveryToTotals(cart.totals || {}, deliveryFeeData);
 
     const orderDoc = {
       docId: orderId,
@@ -298,6 +367,10 @@ export async function POST(req) {
 
       customer_snapshot: {
         ...user,
+        account: {
+          ...(user?.account || {}),
+          accountName: resolvedAccountName
+        },
         customerId: targetCustomerId
       },
 

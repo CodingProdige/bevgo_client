@@ -50,6 +50,27 @@ function parseDate(value) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function normalizeNullStrings(value) {
+  if (Array.isArray(value)) {
+    return value.map(item => normalizeNullStrings(item));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, v]) => [key, normalizeNullStrings(v)])
+    );
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "" || normalized === "null") {
+      return null;
+    }
+  }
+
+  return value;
+}
+
 function canCancelOrder(order) {
   const orderStatus = order?.order?.status?.order || null;
   const paymentStatus =
@@ -201,12 +222,12 @@ function withCancelFlag(order) {
   const normalizedOrder = withIndexedPaymentHistory(
     withFinalPayableTotal(normalizeReturns(order))
   );
-  return {
+  return normalizeNullStrings({
     ...normalizedOrder,
     can_cancel: canCancelOrder(normalizedOrder),
     refund_summary: buildRefundSummary(normalizedOrder),
     order_summary: buildOrderSummary(normalizedOrder?.totals)
-  };
+  });
 }
 
 function matchesFilters(order, filters) {

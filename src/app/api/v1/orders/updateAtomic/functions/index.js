@@ -15,7 +15,6 @@ function clone(obj) {
 }
 
 function rebuildTotalsWithDelivery(order, items) {
-  const baseTotals = computeCartTotals(items);
   const existingTotals = order?.totals || {};
 
   const deliveryFeeExcl = Number(existingTotals?.delivery_fee_excl || 0);
@@ -25,15 +24,19 @@ function rebuildTotalsWithDelivery(order, items) {
       Math.max(deliveryFeeIncl - deliveryFeeExcl, 0)
   );
 
+  const baseTotals = computeCartTotals(items, {
+    pricingAdjustment: existingTotals?.pricing_adjustment || null,
+    deliveryFeeExcl,
+    deliveryFeeIncl,
+    deliveryFeeVat
+  });
+
   return {
     ...existingTotals,
     ...baseTotals,
     delivery_fee_excl: r2(deliveryFeeExcl),
     delivery_fee_incl: r2(deliveryFeeIncl),
-    delivery_fee_vat: r2(deliveryFeeVat),
-    vat_total: r2(Number(baseTotals?.vat_total || 0) + deliveryFeeVat),
-    final_excl: r2(Number(baseTotals?.final_excl || 0) + deliveryFeeExcl),
-    final_incl: r2(Number(baseTotals?.final_incl || 0) + deliveryFeeIncl)
+    delivery_fee_vat: r2(deliveryFeeVat)
   };
 }
 

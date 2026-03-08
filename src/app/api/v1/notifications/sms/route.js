@@ -11,6 +11,29 @@ import { smsTemplates } from "./messages.js";
 const ok = (p={},s=200)=> NextResponse.json({ ok:true, ...p }, { status:s });
 const err = (s,t,m,e={})=> NextResponse.json({ ok:false, title:t, message:m, ...e }, { status:s });
 
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
+  }
+  return "";
+}
+
+function resolveNotificationName(input = {}) {
+  const snapshot = input?.customer_snapshot || {};
+  const account = input?.account || snapshot?.account || {};
+  const business = input?.business || snapshot?.business || {};
+  const personal = input?.personal || snapshot?.personal || {};
+
+  return firstNonEmptyString(
+    account?.accountName,
+    business?.companyName,
+    personal?.fullName,
+    input?.customerName,
+    input?.companyName,
+    input?.name
+  );
+}
+
 /* -----------------------------------------
    POST: SEND SMS
 ----------------------------------------- */
@@ -18,6 +41,15 @@ export async function POST(req) {
   try {
     const body = await req.json();
     const { type="custom", to, message, data={} } = body;
+    const resolvedName = resolveNotificationName(data || {});
+    const safeData = {
+      ...(data || {}),
+      ...(resolvedName ? {
+        name: resolvedName,
+        customerName: resolvedName,
+        companyName: resolvedName
+      } : {})
+    };
 
     if (!to) {
       return err(400, "Missing Number", "Field 'to' is required.");
@@ -68,10 +100,10 @@ export async function POST(req) {
 
     // Merge variables {{key}}
     let resolvedMessage = template.message;
-    for (const key of Object.keys(data)) {
+    for (const key of Object.keys(safeData)) {
       resolvedMessage = resolvedMessage.replace(
         new RegExp(`{{${key}}}`, "g"),
-        data[key]
+        safeData[key]
       );
     }
 

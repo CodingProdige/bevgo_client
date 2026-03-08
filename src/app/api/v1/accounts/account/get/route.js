@@ -98,6 +98,31 @@ function normalizeMedia(user) {
   };
 }
 
+function normalizeNullStrings(value) {
+  if (Array.isArray(value)) {
+    return value.map(item => normalizeNullStrings(item));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, v]) => [key, normalizeNullStrings(v)])
+    );
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "" || normalized === "null") {
+      return null;
+    }
+  }
+
+  return value;
+}
+
+function normalizeForResponse(user) {
+  return normalizeNullStrings(normalizeMedia(user));
+}
+
 function enrichAccountFlags(user, totalOrdersPlaced = 0) {
   const createdAt = getCreatedAtDate(user);
   const account = user?.account || {};
@@ -218,7 +243,7 @@ export async function POST(req) {
         return err(404, "User Not Found", `No user found with uid: ${uid}`);
       }
 
-      const data = normalizeMedia(snap.data());
+      const data = normalizeForResponse(snap.data());
       const orderCounts = await buildOrderCountIndex();
       const customerId = getUserCustomerId(data, uid);
       const schemaVersion = data?.account?.schemaVersion || null;
@@ -237,9 +262,10 @@ export async function POST(req) {
 
     const snap = await getDocs(collection(db, "users"));
     const users = snap.docs.map(d => d.data());
+    const normalizedUsers = users.map(user => normalizeForResponse(user));
 
     if (customerCode) {
-      const match = users.find(
+      const match = normalizedUsers.find(
         u => u?.account?.customerCode === customerCode
       );
 
@@ -251,16 +277,15 @@ export async function POST(req) {
         );
       }
 
-      const normalizedMatch = normalizeMedia(match);
       const orderCounts = await buildOrderCountIndex();
-      const customerId = getUserCustomerId(normalizedMatch);
-      const schemaVersion = normalizedMatch?.account?.schemaVersion || null;
+      const customerId = getUserCustomerId(match);
+      const schemaVersion = match?.account?.schemaVersion || null;
       const isNewSchema =
         (typeof schemaVersion === "number" && schemaVersion >= 2) ||
-        Boolean(normalizedMatch?.account?.accountType);
+        Boolean(match?.account?.accountType);
 
       return ok({
-        data: enrichAccountFlags(normalizedMatch, orderCounts.get(customerId) || 0),
+        data: enrichAccountFlags(match, orderCounts.get(customerId) || 0),
         meta: {
           schemaVersion,
           isNewSchema
@@ -268,7 +293,7 @@ export async function POST(req) {
       });
     }
 
-    const filtered = users.filter(u => matchesFilters(u, filters));
+    const filtered = normalizedUsers.filter(u => matchesFilters(u, filters));
     const orderCounts = await buildOrderCountIndex();
 
     filtered.sort((a, b) => {
@@ -286,7 +311,7 @@ export async function POST(req) {
     const pageUsers = start < total ? filtered.slice(start, end) : [];
     const pageUsersWithIndex = pageUsers.map((user, i) => ({
       ...enrichAccountFlags(
-        normalizeMedia(user),
+        user,
         orderCounts.get(getUserCustomerId(user)) || 0
       ),
       account_index: start + i + 1

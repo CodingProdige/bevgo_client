@@ -84,6 +84,29 @@ function interpolate(template = "", vars = {}) {
   });
 }
 
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
+  }
+  return "";
+}
+
+function resolveNotificationName(input = {}) {
+  const snapshot = input?.customer_snapshot || {};
+  const account = input?.account || snapshot?.account || {};
+  const business = input?.business || snapshot?.business || {};
+  const personal = input?.personal || snapshot?.personal || {};
+
+  return firstNonEmptyString(
+    account?.accountName,
+    business?.companyName,
+    personal?.fullName,
+    input?.customerName,
+    input?.companyName,
+    input?.name
+  );
+}
+
 function buildMessage(type, vars = {}) {
   const tpl = pushTemplates?.[type];
   if (tpl) {
@@ -170,6 +193,15 @@ export async function POST(req) {
   } = body || {};
 
   console.log("📩 PUSH REQUEST:", body);
+  const resolvedName = resolveNotificationName(variables || {});
+  const safeVariables = {
+    ...(variables || {}),
+    ...(resolvedName ? {
+      name: resolvedName,
+      customerName: resolvedName,
+      companyName: resolvedName
+    } : {})
+  };
 
   if (!global && !uid && !(Array.isArray(uids) && uids.length > 0)) {
     return NextResponse.json(
@@ -199,11 +231,12 @@ export async function POST(req) {
     });
   }
 
-  const templateMsg = buildMessage(type, variables || {});
+  const templateMsg = buildMessage(type, safeVariables);
   const deepLink = deeplink || link || notification?.link || templateMsg?.link || "";
   const payloadData = normalizeDataPayload({
     ...(data || {}),
     ...(type ? { template: type } : {}),
+    ...(resolvedName ? { name: resolvedName, customerName: resolvedName, companyName: resolvedName } : {}),
     ...(deepLink ? { link: deepLink, deeplink: deepLink } : {})
   });
   const payloadNotification = {
