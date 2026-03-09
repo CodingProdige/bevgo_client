@@ -123,6 +123,18 @@ function buildMessage(type, vars = {}) {
   };
 }
 
+function normalizeOrderNumber(value) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return trimmed;
+}
+
+function deriveMerchantTransactionId(orderNumber) {
+  const normalized = normalizeOrderNumber(orderNumber);
+  if (!normalized) return "";
+  return normalized.replace(/-/g, "");
+}
+
 function normalizeDataPayload(data = {}) {
   const out = {};
   for (const [k, v] of Object.entries(data || {})) {
@@ -184,6 +196,7 @@ export async function POST(req) {
     uids,
     global = false,
     type,
+    orderNumber,
     variables,
     notification,
     data,
@@ -193,9 +206,17 @@ export async function POST(req) {
   } = body || {};
 
   console.log("📩 PUSH REQUEST:", body);
+  const resolvedOrderNumber = normalizeOrderNumber(
+    orderNumber || variables?.orderNumber || data?.orderNumber || ""
+  );
+  const derivedMerchantTransactionId = deriveMerchantTransactionId(resolvedOrderNumber);
   const resolvedName = resolveNotificationName(variables || {});
   const safeVariables = {
     ...(variables || {}),
+    ...(resolvedOrderNumber ? { orderNumber: resolvedOrderNumber } : {}),
+    ...(derivedMerchantTransactionId
+      ? { merchantTransactionId: derivedMerchantTransactionId }
+      : {}),
     ...(resolvedName ? {
       name: resolvedName,
       customerName: resolvedName,
@@ -232,10 +253,25 @@ export async function POST(req) {
   }
 
   const templateMsg = buildMessage(type, safeVariables);
-  const deepLink = deeplink || link || notification?.link || templateMsg?.link || "";
+  const derivedOrderDeeplink = resolvedOrderNumber
+    ? `bevgoclientportal://bevgoclientportal.com/order?orderNumber=${encodeURIComponent(
+        resolvedOrderNumber
+      )}`
+    : "";
+  const deepLink =
+    deeplink ||
+    link ||
+    notification?.link ||
+    templateMsg?.link ||
+    derivedOrderDeeplink ||
+    "";
   const payloadData = normalizeDataPayload({
     ...(data || {}),
     ...(type ? { template: type } : {}),
+    ...(resolvedOrderNumber ? { orderNumber: resolvedOrderNumber } : {}),
+    ...(derivedMerchantTransactionId
+      ? { merchantTransactionId: derivedMerchantTransactionId }
+      : {}),
     ...(resolvedName ? { name: resolvedName, customerName: resolvedName, companyName: resolvedName } : {}),
     ...(deepLink ? { link: deepLink, deeplink: deepLink } : {})
   });

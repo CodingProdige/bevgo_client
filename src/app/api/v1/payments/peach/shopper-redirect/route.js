@@ -24,10 +24,27 @@ function appendQueryParam(rawUrl, key, value) {
   }
 }
 
-export async function GET(req) {
+async function handleRedirect(req) {
   try {
-    const { searchParams } = new URL(req.url);
-    const merchantTransactionId = searchParams.get("merchantTransactionId");
+    const url = new URL(req.url);
+    const searchParams = url.searchParams;
+
+    let merchantTransactionId = searchParams.get("merchantTransactionId");
+
+    // Peach/browser callbacks may return as POST with form fields.
+    if (!merchantTransactionId && req.method === "POST") {
+      const contentType = req.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const body = await req.json().catch(() => ({}));
+        merchantTransactionId = body?.merchantTransactionId || null;
+      } else if (
+        contentType.includes("application/x-www-form-urlencoded") ||
+        contentType.includes("multipart/form-data")
+      ) {
+        const form = await req.formData().catch(() => null);
+        merchantTransactionId = form?.get("merchantTransactionId") || null;
+      }
+    }
 
     if (!merchantTransactionId) {
       return err(
@@ -76,4 +93,12 @@ export async function GET(req) {
   } catch (e) {
     return err(500, "Redirect Error", e?.message || "Server error.");
   }
+}
+
+export async function GET(req) {
+  return handleRedirect(req);
+}
+
+export async function POST(req) {
+  return handleRedirect(req);
 }

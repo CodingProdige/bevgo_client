@@ -11,6 +11,18 @@ export const pushTemplates = {
     link: "bevgo://order/{{orderId}}"
   },
 
+  "order-received-admin": {
+    title: "New Order Received",
+    body: "Order {{orderNumber}} has been placed.",
+    link: "bevgoclientportal://bevgoclientportal.com/order?orderNumber={{orderNumber}}"
+  },
+
+  "order-confirmation": {
+    title: "Order Placed Successfully",
+    body: "Your order {{orderNumber}} has been placed.",
+    link: "bevgoclientportal://bevgoclientportal.com/order?orderNumber={{orderNumber}}"
+  },
+
   "order-delivered": {
     title: "Delivery Complete 🎉",
     body: "Thanks for ordering with Bevgo! Your delivery has been completed.",
